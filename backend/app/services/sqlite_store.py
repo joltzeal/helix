@@ -10,7 +10,7 @@ from typing import Any
 
 class SQLiteStore:
     def __init__(self, db_path: Path | None = None) -> None:
-        self.db_path = db_path or Path("runtime") / "u-card.sqlite3"
+        self.db_path = db_path or Path("runtime") / "helix.sqlite3"
         self._lock = RLock()
         self._init_db()
 

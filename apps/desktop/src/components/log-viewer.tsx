@@ -300,7 +300,7 @@ function LogViewerTerminalPlain({
   maxHeight,
   lineNumbers,
   timestamps,
-  autoScroll,
+  autoScroll = true,
   colorScale,
   onClear,
   className,

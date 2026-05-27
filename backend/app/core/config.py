@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "U-Card"
+    app_name: str = "Helix"
     api_host: str = "127.0.0.1"
     api_port: int = 8765
     api_reload: bool = True
