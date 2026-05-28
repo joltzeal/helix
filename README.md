@@ -43,6 +43,8 @@ uv run python -m compileall backend/app
 
 插件是一个 ZIP 包，上传后会解压到 Helix 用户数据目录的 `plugins` 下。ZIP 根目录必须包含 `manifest.json` 和入口 Python 文件。
 
+插件会在桌面端内置的 Python sidecar 中运行。插件依赖的第三方库必须已经被 sidecar 打包进去；纯 Python 辅助代码可以直接放在插件 ZIP 内。
+
 ### manifest.json
 
 ```json

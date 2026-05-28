@@ -109,12 +109,31 @@ jobs:
         run: |
           mkdir -p apps/desktop/src-tauri/binaries
           uv sync --locked --group dev
+
+          PYINSTALLER_COLLECT_ARGS=(
+            --collect-all alembic
+            --collect-all apscheduler
+            --collect-all DrissionPage
+            --collect-all faker
+            --collect-all fastapi
+            --collect-all httpx
+            --collect-all loguru
+            --collect-all multipart
+            --collect-all phone_gen
+            --collect-all pydantic
+            --collect-all pydantic_settings
+            --collect-all sqlalchemy
+            --collect-all sqlmodel
+            --collect-all uvicorn
+            --collect-all websockets
+          )
+
           uv run pyinstaller \
             --clean \
             --onefile \
             --name "helix-api-${TARGET_TRIPLE}" \
             --paths backend \
-            --hidden-import DrissionPage \
+            "${PYINSTALLER_COLLECT_ARGS[@]}" \
             --exclude-module app.task_modules.uber \
             backend/app/run.py
 
