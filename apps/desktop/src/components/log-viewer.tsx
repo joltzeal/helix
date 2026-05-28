@@ -235,6 +235,8 @@ interface LogViewerTerminalProps extends Omit<React.ComponentProps<"div">, "chil
   title?: string
   /** Maximum visible height in pixels. @default 400 */
   maxHeight?: number
+  /** Fill the parent height instead of applying maxHeight to the scroll area. @default false */
+  fill?: boolean
   /** Show line numbers. @default true */
   lineNumbers?: boolean
   /** Show timestamps. @default true */
@@ -253,6 +255,7 @@ function LogViewerTerminal({
   entries,
   title = "日志",
   maxHeight = 400,
+  fill = false,
   lineNumbers = true,
   timestamps = true,
   autoScroll = true,
@@ -268,6 +271,7 @@ function LogViewerTerminal({
         entries={entries}
         title={title}
         maxHeight={maxHeight}
+        fill={fill}
         timestamps={timestamps}
         autoScroll={autoScroll}
         colorScale={colorScale}
@@ -283,6 +287,7 @@ function LogViewerTerminal({
       entries={entries}
       title={title}
       maxHeight={maxHeight}
+      fill={fill}
       lineNumbers={lineNumbers}
       timestamps={timestamps}
       autoScroll={autoScroll}
@@ -298,6 +303,7 @@ function LogViewerTerminalPlain({
   entries,
   title,
   maxHeight,
+  fill,
   lineNumbers,
   timestamps,
   autoScroll = true,
@@ -418,7 +424,7 @@ function LogViewerTerminalPlain({
         ref={scrollRef}
         onScroll={handleScroll}
         className="min-h-0 flex-1 overflow-auto bg-card font-mono text-xs leading-relaxed [scrollbar-width:thin]"
-        style={{ maxHeight }}
+        style={fill ? undefined : { maxHeight }}
         role="log"
         aria-live="polite"
         aria-label={title}
@@ -489,6 +495,7 @@ interface LogViewerMinimalProps extends Omit<React.ComponentProps<"div">, "child
   entries: LogEntry[]
   /** Maximum visible height in pixels. @default 300 */
   maxHeight?: number
+  fill?: boolean
   /** Show timestamps. @default false */
   timestamps?: boolean
   /** Enable auto-scroll to bottom on new entries. @default true */
@@ -500,6 +507,7 @@ interface LogViewerMinimalProps extends Omit<React.ComponentProps<"div">, "child
 function LogViewerMinimal({
   entries,
   maxHeight = 300,
+  fill = false,
   timestamps = false,
   autoScroll = true,
   colorScale,
@@ -524,7 +532,7 @@ function LogViewerMinimal({
         ref={scrollRef}
         onScroll={handleScroll}
         className="min-h-0 flex-1 overflow-auto font-mono text-xs leading-relaxed [scrollbar-width:thin]"
-        style={{ maxHeight }}
+        style={fill ? undefined : { maxHeight }}
         role="log"
         aria-live="polite"
         aria-label="日志输出"
@@ -582,6 +590,7 @@ interface LogViewerFilterableProps extends Omit<React.ComponentProps<"div">, "ch
   title?: string
   /** Maximum visible height in pixels. @default 400 */
   maxHeight?: number
+  fill?: boolean
   /** Show timestamps. @default true */
   timestamps?: boolean
   /** Enable auto-scroll to bottom on new entries. @default true */
@@ -598,6 +607,7 @@ function LogViewerFilterable({
   entries,
   title = "日志",
   maxHeight = 400,
+  fill = false,
   timestamps = true,
   autoScroll = true,
   levels = ["error", "warn", "info", "debug"],
@@ -759,7 +769,7 @@ function LogViewerFilterable({
         ref={scrollRef}
         onScroll={handleScroll}
         className="min-h-0 flex-1 overflow-auto font-mono text-xs leading-relaxed [scrollbar-width:thin]"
-        style={{ maxHeight }}
+        style={fill ? undefined : { maxHeight }}
         role="log"
         aria-live="polite"
         aria-label={title}
