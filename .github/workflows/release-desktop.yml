@@ -18,6 +18,8 @@ jobs:
   release:
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -133,6 +135,7 @@ jobs:
           projectPath: apps/desktop
           args: ${{ matrix.args }}
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          releaseCommitish: ${{ github.event_name == 'workflow_dispatch' && github.ref_name || github.sha }}
           releaseName: Helix ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseBody: "Desktop builds for macOS and Windows."
           releaseDraft: false
