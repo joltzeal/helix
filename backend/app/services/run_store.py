@@ -315,6 +315,20 @@ class RunStore:
                 if item.profile_id and item.debug_address and item.status not in {"pending", "failed", "completed", "deleting"}
             ]
 
+    def list_active_profile_ids(self, run_id: str) -> list[str]:
+        with self._lock:
+            run = self._runs[run_id]
+            return [
+                item.profile_id
+                for item in sorted(run.items, key=lambda current: current.item_index)
+                if item.profile_id
+                and item.status not in {"completed", "failed", "stopped", "deleting"}
+            ]
+
+    def is_stopping(self, run_id: str) -> bool:
+        with self._lock:
+            return self._runs[run_id].status in {"stopping", "stopped"}
+
     def reserve_config_textarea_line(
         self,
         run_id: str,

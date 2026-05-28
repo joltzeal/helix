@@ -26,11 +26,19 @@ env/
 # Runtime data and databases
 runtime/
 backend/runtime/
+backend/plugins/
+local_plugins/
+plugin_uploads/
 *.sqlite
 *.sqlite3
 *.sqlite3-*
 *.db
 *.db-*
+
+# Private/local task modules
+backend/app/task_modules/uber/
+debug_uber_payment.py
+*.plugin.zip
 
 # Node/Vite
 node_modules/

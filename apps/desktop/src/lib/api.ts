@@ -31,6 +31,16 @@ export interface TaskModule {
   result_blocks: TaskResultBlock[]
 }
 
+export interface PluginModule {
+  key: string
+  name: string
+  version: string
+  description: string
+  entry: string
+  status: string
+  error: string
+}
+
 export interface BrowserHealthResponse {
   vendor: string
   ok: boolean
@@ -92,20 +102,43 @@ export interface TaskConfigurationResponse {
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const isFormData = init?.body instanceof FormData
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
     ...init,
+    headers: isFormData
+      ? init?.headers
+      : {
+          "Content-Type": "application/json",
+          ...init?.headers,
+        },
   })
 
   if (!response.ok) {
     const text = await response.text()
-    throw new Error(text || `Request failed: ${response.status}`)
+    throw new Error(parseErrorMessage(text) || `请求失败：${response.status}`)
   }
 
   return response.json() as Promise<T>
+}
+
+function parseErrorMessage(text: string) {
+  if (!text) {
+    return ""
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (typeof parsed === "object" && parsed !== null && "detail" in parsed) {
+      const detail = (parsed as { detail: unknown }).detail
+      if (typeof detail === "string") {
+        return detail
+      }
+    }
+  } catch {
+    return text
+  }
+
+  return text
 }
 
 export const api = {
@@ -114,6 +147,27 @@ export const api = {
       method: "POST",
     }),
   listTasks: () => apiFetch<TaskModule[]>("/api/tasks"),
+  listPluginModules: () => apiFetch<PluginModule[]>("/api/task-modules"),
+  reloadPluginModules: () =>
+    apiFetch<PluginModule[]>("/api/task-modules/reload", {
+      method: "POST",
+    }),
+  reloadPluginModule: (key: string) =>
+    apiFetch<PluginModule>(`/api/task-modules/${key}/reload`, {
+      method: "POST",
+    }),
+  deletePluginModule: (key: string) =>
+    apiFetch<PluginModule[]>(`/api/task-modules/${key}`, {
+      method: "DELETE",
+    }),
+  uploadPluginModule: (file: File) => {
+    const body = new FormData()
+    body.append("file", file)
+    return apiFetch<PluginModule>("/api/task-modules/upload", {
+      method: "POST",
+      body,
+    })
+  },
   getTaskConfiguration: (taskKey: string) =>
     apiFetch<TaskConfigurationResponse>(`/api/tasks/configurations/${taskKey}`),
   saveTaskConfiguration: (taskKey: string, config: Record<string, unknown>) =>

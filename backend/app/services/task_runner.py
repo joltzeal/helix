@@ -8,6 +8,10 @@ from app.task_modules.base import TaskExecutionContext
 from app.task_modules.registry import get_task_module
 
 
+class TaskStopRequested(asyncio.CancelledError):
+    pass
+
+
 async def run_task(run_id: str) -> None:
     run = run_store.get_run(run_id)
     task_module = get_task_module(run.task_key)
@@ -19,6 +23,10 @@ async def run_task(run_id: str) -> None:
 
     run_store.mark_run_started(run.id)
 
+    def raise_if_stopping() -> None:
+        if run_store.is_stopping(run.id):
+            raise TaskStopRequested("任务已请求停止。")
+
     async def run_item(item_id: str) -> None:
         item = next(item for item in run_store.get_run(run.id).items if item.id == item_id)
         result_message: str | None = None
@@ -26,6 +34,7 @@ async def run_task(run_id: str) -> None:
         cancelled = False
 
         try:
+            raise_if_stopping()
             run_store.mark_item_started(run.id, item.id)
             result = await task_module.run(
                 TaskExecutionContext(
@@ -63,10 +72,12 @@ async def run_task(run_id: str) -> None:
                         message,
                         extra,
                     ),
+                    is_stopping=lambda: run_store.is_stopping(run.id),
+                    raise_if_stopping=raise_if_stopping,
                 )
             )
             result_message = _result_message(result)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, TaskStopRequested):
             cancelled = True
             raise
         except Exception as exc:
@@ -86,6 +97,7 @@ async def run_task(run_id: str) -> None:
     async def run_dynamic_worker() -> None:
         assert work_config_key is not None
         while True:
+            raise_if_stopping()
             item = run_store.add_run_item_if_work_available(run.id, work_config_key)
             if item is None:
                 return

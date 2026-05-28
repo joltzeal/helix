@@ -53,6 +53,8 @@ class TaskExecutionContext:
     mark_browser_closing: Callable[[], None]
     mark_browser_deleting: Callable[[], None]
     list_run_profile_ids: Callable[[], list[str]] = field(default_factory=lambda: lambda: [])
+    is_stopping: Callable[[], bool] = field(default_factory=lambda: lambda: False)
+    raise_if_stopping: Callable[[], None] = field(default_factory=lambda: lambda: None)
     reserve_config_textarea_line: Callable[[str], dict[str, str]] = field(
         default_factory=lambda: lambda _key: {}
     )

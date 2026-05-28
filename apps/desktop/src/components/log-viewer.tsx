@@ -72,11 +72,11 @@ const DEFAULT_LEVEL_COLORS: Record<LogLevel, LevelColors> = {
 }
 
 const LEVEL_LABELS: Record<LogLevel, string> = {
-  error: "ERR",
-  warn: "WRN",
-  info: "INF",
-  debug: "DBG",
-  verbose: "VRB",
+  error: "错",
+  warn: "警",
+  info: "信",
+  debug: "调",
+  verbose: "详",
 }
 
 function resolveLevelColors(
@@ -97,7 +97,7 @@ function resolveLevelColors(
 
 function formatTimestamp(ts?: string): string {
   const d = ts ? new Date(ts) : new Date()
-  return d.toLocaleTimeString("en-US", {
+  return d.toLocaleTimeString("zh-CN", {
     hour12: false,
     hour: "2-digit",
     minute: "2-digit",
@@ -108,7 +108,7 @@ function formatTimestamp(ts?: string): string {
 function formatTimestampFull(ts?: string): string {
   const d = ts ? new Date(ts) : new Date()
   const ms = d.getMilliseconds().toString().padStart(3, "0")
-  return `${d.toLocaleTimeString("en-US", {
+  return `${d.toLocaleTimeString("zh-CN", {
     hour12: false,
     hour: "2-digit",
     minute: "2-digit",
@@ -231,7 +231,7 @@ function ToolbarButton({
 interface LogViewerTerminalProps extends Omit<React.ComponentProps<"div">, "children" | "title"> {
   /** Log entries to display. */
   entries: LogEntry[]
-  /** Title shown in the toolbar. @default "Logs" */
+  /** Title shown in the toolbar. @default "日志" */
   title?: string
   /** Maximum visible height in pixels. @default 400 */
   maxHeight?: number
@@ -251,7 +251,7 @@ interface LogViewerTerminalProps extends Omit<React.ComponentProps<"div">, "chil
 
 function LogViewerTerminal({
   entries,
-  title = "Logs",
+  title = "日志",
   maxHeight = 400,
   lineNumbers = true,
   timestamps = true,
@@ -349,7 +349,7 @@ function LogViewerTerminalPlain({
 
         <span className="mr-1 text-[10px] tabular-nums text-muted-foreground">
           {filteredEntries.length}
-          {searchQuery && ` / ${entries.length}`} lines
+          {searchQuery && ` / ${entries.length}`} 行
         </span>
 
         <div className="flex items-center gap-0.5">
@@ -358,7 +358,7 @@ function LogViewerTerminalPlain({
               setSearchOpen(!searchOpen)
               if (searchOpen) setSearchQuery("")
             }}
-            label={searchOpen ? "Close search" : "Search"}
+            label={searchOpen ? "关闭搜索" : "搜索"}
             active={searchOpen}
           >
             <Search className="size-3.5" />
@@ -366,22 +366,22 @@ function LogViewerTerminalPlain({
 
           <ToolbarButton
             onClick={() => setPaused(!paused)}
-            label={paused ? "Resume auto-scroll" : "Pause auto-scroll"}
+            label={paused ? "恢复自动滚动" : "暂停自动滚动"}
             active={paused}
           >
             {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
           </ToolbarButton>
 
-          <ToolbarButton onClick={handleCopyAll} label={copied ? "Copied" : "Copy all logs"}>
+          <ToolbarButton onClick={handleCopyAll} label={copied ? "已复制" : "复制全部日志"}>
             {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
           </ToolbarButton>
 
-          <ToolbarButton onClick={() => exportLogs(entries)} label="Download logs">
+          <ToolbarButton onClick={() => exportLogs(entries)} label="下载日志">
             <Download className="size-3.5" />
           </ToolbarButton>
 
           {onClear && (
-            <ToolbarButton onClick={onClear} label="Clear logs">
+            <ToolbarButton onClick={onClear} label="清空日志">
               <Trash2 className="size-3.5" />
             </ToolbarButton>
           )}
@@ -396,7 +396,7 @@ function LogViewerTerminalPlain({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter logs…"
+            placeholder="筛选日志..."
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
             autoFocus
           />
@@ -405,7 +405,7 @@ function LogViewerTerminalPlain({
               type="button"
               onClick={() => setSearchQuery("")}
               className="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-              aria-label="Clear search"
+              aria-label="清空搜索"
             >
               <X className="size-3" />
             </button>
@@ -425,7 +425,7 @@ function LogViewerTerminalPlain({
       >
         {filteredEntries.length === 0 ? (
           <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
-            {searchQuery ? "No matching log entries." : "No log entries."}
+            {searchQuery ? "没有匹配的日志。" : "暂无日志。"}
           </div>
         ) : (
           filteredEntries.map((entry, i) => {
@@ -472,10 +472,10 @@ function LogViewerTerminalPlain({
           type="button"
           onClick={scrollToBottom}
           className="flex w-full items-center justify-center gap-1.5 border-t border-border/40 bg-muted/30 py-1.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-          aria-label="Scroll to latest"
+          aria-label="滚动到最新日志"
         >
           <ArrowDown className="size-3" />
-          New logs below
+          下方有新日志
         </button>
       )}
     </div>
@@ -527,11 +527,11 @@ function LogViewerMinimal({
         style={{ maxHeight }}
         role="log"
         aria-live="polite"
-        aria-label="Log output"
+        aria-label="日志输出"
       >
         {entries.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-            No log entries.
+            暂无日志。
           </div>
         ) : (
           entries.map((entry, i) => {
@@ -564,7 +564,7 @@ function LogViewerMinimal({
           type="button"
           onClick={scrollToBottom}
           className="flex w-full items-center justify-center gap-1.5 border-t border-border/40 bg-muted/20 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-          aria-label="Scroll to latest"
+          aria-label="滚动到最新日志"
         >
           <ArrowDown className="size-3" />
         </button>
@@ -578,7 +578,7 @@ function LogViewerMinimal({
 interface LogViewerFilterableProps extends Omit<React.ComponentProps<"div">, "children" | "title"> {
   /** Log entries to display. */
   entries: LogEntry[]
-  /** Title shown in the header. @default "Logs" */
+  /** Title shown in the header. @default "日志" */
   title?: string
   /** Maximum visible height in pixels. @default 400 */
   maxHeight?: number
@@ -596,7 +596,7 @@ interface LogViewerFilterableProps extends Omit<React.ComponentProps<"div">, "ch
 
 function LogViewerFilterable({
   entries,
-  title = "Logs",
+  title = "日志",
   maxHeight = 400,
   timestamps = true,
   autoScroll = true,
@@ -675,17 +675,17 @@ function LogViewerFilterable({
         <div className="flex items-center gap-0.5">
           <ToolbarButton
             onClick={handleCopyFiltered}
-            label={copied ? "Copied" : "Copy filtered logs"}
+            label={copied ? "已复制" : "复制筛选后的日志"}
           >
             {copied ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}
           </ToolbarButton>
 
-          <ToolbarButton onClick={() => exportLogs(filteredEntries)} label="Download logs">
+          <ToolbarButton onClick={() => exportLogs(filteredEntries)} label="下载日志">
             <Download className="size-3.5" />
           </ToolbarButton>
 
           {onClear && (
-            <ToolbarButton onClick={onClear} label="Clear logs">
+            <ToolbarButton onClick={onClear} label="清空日志">
               <Trash2 className="size-3.5" />
             </ToolbarButton>
           )}
@@ -707,7 +707,7 @@ function LogViewerFilterable({
                 onClick={() => toggleLevel(level)}
                 role="checkbox"
                 aria-checked={isActive}
-                aria-label={`${isActive ? "Hide" : "Show"} ${level} logs`}
+                aria-label={`${isActive ? "隐藏" : "显示"} ${level} 日志`}
                 className={cn(
                   "inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors outline-none",
                   "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
@@ -738,7 +738,7 @@ function LogViewerFilterable({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter…"
+            placeholder="筛选..."
             className="w-24 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none sm:w-32"
           />
           {searchQuery && (
@@ -746,7 +746,7 @@ function LogViewerFilterable({
               type="button"
               onClick={() => setSearchQuery("")}
               className="inline-flex size-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-              aria-label="Clear search"
+              aria-label="清空搜索"
             >
               <X className="size-3" />
             </button>
@@ -766,7 +766,7 @@ function LogViewerFilterable({
       >
         {filteredEntries.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-1 py-10 text-sm text-muted-foreground">
-            <span>No matching log entries.</span>
+            <span>没有匹配的日志。</span>
             {(searchQuery || activeLevels.size < levels.length) && (
               <button
                 type="button"
@@ -776,7 +776,7 @@ function LogViewerFilterable({
                 }}
                 className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
-                Reset filters
+                重置筛选
               </button>
             )}
           </div>
@@ -820,10 +820,10 @@ function LogViewerFilterable({
           type="button"
           onClick={scrollToBottom}
           className="flex w-full items-center justify-center gap-1.5 border-t border-border/40 bg-muted/30 py-1.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-          aria-label="Scroll to latest"
+          aria-label="滚动到最新日志"
         >
           <ArrowDown className="size-3" />
-          New logs below
+          下方有新日志
         </button>
       )}
     </div>

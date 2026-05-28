@@ -3,12 +3,14 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIcon,
   DownloadIcon,
+  PackageIcon,
   Settings2Icon,
   PlayIcon,
   RefreshCwIcon,
   ReceiptTextIcon,
   Rows3Icon,
   SquareIcon,
+  Trash2Icon,
   UploadIcon,
   WorkflowIcon,
 } from "lucide-react"
@@ -62,18 +64,35 @@ import {
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { LogViewerTerminal } from "@/components/log-viewer"
-import { api, type TaskConfigField, type TaskModule, type TaskResultBlock, type TaskRun, type TaskRunLog } from "@/lib/api"
+import {
+  api,
+  type PluginModule,
+  type TaskConfigField,
+  type TaskModule,
+  type TaskResultBlock,
+  type TaskRun,
+  type TaskRunLog,
+} from "@/lib/api"
 
 const VENDOR = "bit_browser"
+type Page = "launcher" | "records" | "modules"
 type TaskResult = Record<string, unknown>
+interface TaskResultGroup {
+  runId: string
+  taskName: string
+  status: string
+  createdAt: string
+  results: TaskResult[]
+}
 
 function App() {
-  const [page, setPage] = useState<"launcher" | "records">("launcher")
+  const [page, setPage] = useState<Page>("launcher")
   const [tasks, setTasks] = useState<TaskModule[]>([])
+  const [pluginModules, setPluginModules] = useState<PluginModule[]>([])
   const [runs, setRuns] = useState<TaskRun[]>([])
   const [logsByRunId, setLogsByRunId] = useState<Record<string, TaskRunLog[]>>({})
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
-  const [selectedTaskKey, setSelectedTaskKey] = useState("uber")
+  const [selectedTaskKey, setSelectedTaskKey] = useState("")
   const [concurrency, setConcurrency] = useState(1)
   const [config, setConfig] = useState<Record<string, unknown>>({})
   const [browserHealth, setBrowserHealth] = useState<"checking" | "online" | "offline">("checking")
@@ -81,6 +100,8 @@ function App() {
   const [isStarting, setIsStarting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [isSavingConfig, setIsSavingConfig] = useState(false)
+  const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
+  const [isReloadingPlugins, setIsReloadingPlugins] = useState(false)
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.key === selectedTaskKey) ?? tasks[0],
@@ -105,7 +126,7 @@ function App() {
         socket.close()
         return
       }
-      setError((current) => (current === "Run websocket connection failed." ? null : current))
+      setError((current) => (current === "运行状态连接失败。" ? null : current))
     }
 
     socket.onmessage = (event) => {
@@ -120,7 +141,7 @@ function App() {
 
     socket.onerror = () => {
       if (!disposed) {
-        setError("Run websocket connection failed.")
+        setError("运行状态连接失败。")
       }
     }
 
@@ -143,7 +164,7 @@ function App() {
         socket.close()
         return
       }
-      setError((current) => (current === "Log websocket connection failed." ? null : current))
+      setError((current) => (current === "日志连接失败。" ? null : current))
     }
 
     socket.onmessage = (event) => {
@@ -156,7 +177,7 @@ function App() {
 
     socket.onerror = () => {
       if (!disposed) {
-        setError("Log websocket connection failed.")
+        setError("日志连接失败。")
       }
     }
 
@@ -196,7 +217,7 @@ function App() {
   }, [selectedTask])
 
   async function loadInitialData() {
-    await Promise.all([refreshTasks(), refreshRuns(), checkBrowserHealth()])
+    await Promise.all([refreshTasks(), refreshRuns(), refreshPluginModules(), checkBrowserHealth()])
   }
 
   async function refreshTasks() {
@@ -223,6 +244,15 @@ function App() {
       )
       const latestRun = nextRuns[0]
       setActiveRunId((current) => current ?? latestRun?.id ?? null)
+    } catch (caught) {
+      setError(getErrorMessage(caught))
+    }
+  }
+
+  async function refreshPluginModules() {
+    try {
+      const nextPluginModules = await api.listPluginModules()
+      setPluginModules(nextPluginModules)
     } catch (caught) {
       setError(getErrorMessage(caught))
     }
@@ -340,13 +370,109 @@ function App() {
     }
   }
 
+  async function uploadPluginModule(file: File) {
+    setError(null)
+    setIsUploadingPlugin(true)
+
+    try {
+      await api.uploadPluginModule(file)
+      await Promise.all([refreshPluginModules(), refreshTasks()])
+    } catch (caught) {
+      setError(getErrorMessage(caught))
+    } finally {
+      setIsUploadingPlugin(false)
+    }
+  }
+
+  async function reloadPluginModules() {
+    setError(null)
+    setIsReloadingPlugins(true)
+
+    try {
+      const nextPluginModules = await api.reloadPluginModules()
+      setPluginModules(nextPluginModules)
+      await refreshTasks()
+    } catch (caught) {
+      setError(getErrorMessage(caught))
+    } finally {
+      setIsReloadingPlugins(false)
+    }
+  }
+
+  async function reloadPluginModule(key: string) {
+    setError(null)
+    setIsReloadingPlugins(true)
+
+    try {
+      await api.reloadPluginModule(key)
+      await Promise.all([refreshPluginModules(), refreshTasks()])
+    } catch (caught) {
+      setError(getErrorMessage(caught))
+    } finally {
+      setIsReloadingPlugins(false)
+    }
+  }
+
+  async function deletePluginModule(key: string) {
+    setError(null)
+    setIsReloadingPlugins(true)
+
+    try {
+      const nextPluginModules = await api.deletePluginModule(key)
+      setPluginModules(nextPluginModules)
+      await refreshTasks()
+    } catch (caught) {
+      setError(getErrorMessage(caught))
+    } finally {
+      setIsReloadingPlugins(false)
+    }
+  }
+
+  const content = page === "launcher" ? (
+    <section className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[400px_minmax(0,1fr)]">
+      <TaskLauncher
+        tasks={tasks}
+        selectedTask={selectedTask}
+        selectedTaskKey={selectedTaskKey}
+        concurrency={concurrency}
+        config={config}
+        runs={runs}
+        runningRun={runningRun}
+        isStarting={isStarting}
+        isStopping={isStopping}
+        isSavingConfig={isSavingConfig}
+        onTaskChange={setSelectedTaskKey}
+        onConcurrencyChange={setConcurrency}
+        onConfigChange={setConfig}
+        onConfigSave={() => saveTaskConfig()}
+        onConfigExport={exportTaskConfig}
+        onConfigImport={(file) => void importTaskConfig(file)}
+        onStart={() => void startRun()}
+        onStop={() => void stopRun()}
+      />
+      <LogPanel logs={activeLogs} />
+    </section>
+  ) : page === "records" ? (
+    <RunRecords runs={runs} onRefresh={() => void refreshRuns()} />
+  ) : (
+    <PluginModulesPanel
+      modules={pluginModules}
+      isUploading={isUploadingPlugin}
+      isReloading={isReloadingPlugins}
+      onUpload={(file) => void uploadPluginModule(file)}
+      onReloadAll={() => void reloadPluginModules()}
+      onReload={(key) => void reloadPluginModule(key)}
+      onDelete={(key) => void deletePluginModule(key)}
+    />
+  )
+
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-5 py-5">
-        <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <main className="h-screen overflow-hidden bg-background text-foreground">
+      <div className="mx-auto flex h-full w-full max-w-[1280px] flex-col gap-4 overflow-hidden px-4 py-4">
+        <header className="flex shrink-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold tracking-normal">Helix Automation Console</h1>
-            <p className="text-sm text-muted-foreground">Fingerprint browser status, task launch, and live task logs.</p>
+            <h1 className="text-2xl font-semibold tracking-normal">Helix 自动化控制台</h1>
+            <p className="text-sm text-muted-foreground">指纹浏览器状态、任务启动和实时任务日志。</p>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -363,48 +489,29 @@ function App() {
               <Rows3Icon data-icon="inline-start" />
               运行记录
             </Button>
+            <Button
+              variant={page === "modules" ? "secondary" : "ghost"}
+              onClick={() => setPage("modules")}
+            >
+              <PackageIcon data-icon="inline-start" />
+              任务插件
+            </Button>
             <BrowserHealthBadge status={browserHealth} />
             <Button variant="outline" onClick={() => void checkBrowserHealth()}>
               <RefreshCwIcon data-icon="inline-start" />
-              Refresh
+              刷新
             </Button>
           </div>
         </header>
 
         {error ? (
-          <Alert variant="destructive">
-            <AlertTitle>Request failed</AlertTitle>
+          <Alert variant="destructive" className="shrink-0">
+            <AlertTitle>请求失败</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         ) : null}
 
-        {page === "launcher" ? (
-          <section className="grid gap-5 xl:grid-cols-[420px_1fr]">
-            <TaskLauncher
-              tasks={tasks}
-              selectedTask={selectedTask}
-              selectedTaskKey={selectedTaskKey}
-              concurrency={concurrency}
-              config={config}
-              runs={runs}
-              runningRun={runningRun}
-              isStarting={isStarting}
-              isStopping={isStopping}
-              isSavingConfig={isSavingConfig}
-              onTaskChange={setSelectedTaskKey}
-              onConcurrencyChange={setConcurrency}
-              onConfigChange={setConfig}
-              onConfigSave={() => saveTaskConfig()}
-              onConfigExport={exportTaskConfig}
-              onConfigImport={(file) => void importTaskConfig(file)}
-              onStart={() => void startRun()}
-              onStop={() => void stopRun()}
-            />
-            <LogPanel logs={activeLogs} />
-          </section>
-        ) : (
-          <RunRecords runs={runs} onRefresh={() => void refreshRuns()} />
-        )}
+        {content}
       </div>
     </main>
   )
@@ -412,15 +519,16 @@ function App() {
 
 function LogPanel({ logs }: { logs: TaskRunLog[] }) {
   return (
-    <Card>
+    <Card className="h-full min-h-0">
       <CardHeader>
-        <CardTitle>Live logs</CardTitle>
-        <CardDescription>Latest task run logs by level.</CardDescription>
+        <CardTitle>实时日志</CardTitle>
+        <CardDescription>按等级显示最近的任务运行日志。</CardDescription>
       </CardHeader>
-      <CardContent className="h-full">
+      <CardContent className="min-h-0 flex-1">
         <LogViewerTerminal
-          title="Task run"
+          title="任务运行"
           filterable
+          maxHeight={620}
           entries={logs.map((log) => ({
             level: log.level,
             message: log.message,
@@ -481,8 +589,8 @@ function TaskLauncher({
   )
   const resultBlocks = selectedTask?.result_blocks ?? []
   const taskResults = useMemo(
-    () => collectTaskResults(runs, resultBlocks),
-    [runs, resultBlocks],
+    () => collectTaskResults(runs, resultBlocks, selectedTask?.key ?? ""),
+    [runs, resultBlocks, selectedTask],
   )
   const blockStats = useMemo(
     () => configBlocks.map((block) => getBlockStats(block, config)),
@@ -497,18 +605,18 @@ function TaskLauncher({
   }
 
   return (
-    <Card>
+    <Card className="h-full min-h-0">
       <CardHeader>
-        <CardTitle>Task launcher</CardTitle>
-        <CardDescription>Select a task module and provide runtime inputs.</CardDescription>
+        <CardTitle>任务启动器</CardTitle>
+        <CardDescription>选择任务模块并填写运行参数。</CardDescription>
         <CardAction>
           <WorkflowIcon className="text-muted-foreground" />
         </CardAction>
       </CardHeader>
-      <CardContent>
+      <CardContent className="min-h-0 overflow-y-auto">
         <FieldGroup>
           <Field>
-            <FieldLabel htmlFor="task-module">Task module</FieldLabel>
+            <FieldLabel htmlFor="task-module">任务模块</FieldLabel>
             <NativeSelect
               id="task-module"
               className="w-full"
@@ -521,11 +629,11 @@ function TaskLauncher({
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <FieldDescription>{selectedTask?.description ?? "No task modules loaded."}</FieldDescription>
+            <FieldDescription>{selectedTask?.description ?? "暂无可用任务模块。"}</FieldDescription>
           </Field>
 
           <Field>
-            <FieldLabel htmlFor="concurrency">Concurrency</FieldLabel>
+            <FieldLabel htmlFor="concurrency">并发数</FieldLabel>
             <Input
               id="concurrency"
               type="number"
@@ -534,7 +642,7 @@ function TaskLauncher({
               value={concurrency}
               onChange={(event) => onConcurrencyChange(Number(event.currentTarget.value))}
             />
-            <FieldDescription>当前 Uber 模块按并发数维持浏览器窗口，到支付表单阶段才领取 cards 行。</FieldDescription>
+            <FieldDescription>任务模块按该数量并行创建任务项。</FieldDescription>
           </Field>
 
           <Separator />
@@ -542,20 +650,18 @@ function TaskLauncher({
           <div className="flex flex-col gap-3 rounded-lg border p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="flex flex-col gap-1">
-                <div className="text-sm font-medium">Task configuration</div>
-                <div className="text-sm text-muted-foreground">
-                  {selectedTask?.config_fields.length ?? 0} fields across {configBlocks.length} blocks.
-                </div>
+                <div className="text-sm font-medium">任务配置</div>
+                
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Button variant="outline" onClick={() => setIsConfigOpen(true)} disabled={!selectedTask}>
                   <Settings2Icon data-icon="inline-start" />
-                  Configure
+                  配置
                 </Button>
                 {resultBlocks.length > 0 ? (
                   <Button variant="outline" onClick={() => setIsResultOpen(true)} disabled={!selectedTask}>
                     <ReceiptTextIcon data-icon="inline-start" />
-                    Result
+                    结果
                   </Button>
                 ) : null}
               </div>
@@ -579,7 +685,7 @@ function TaskLauncher({
             ) : (
               <PlayIcon data-icon="inline-start" />
             )}
-            {runningRun ? (isStopping ? "Stopping" : "Stop task") : isStarting ? "Starting" : "Start task"}
+            {runningRun ? (isStopping ? "正在停止" : "停止任务") : isStarting ? "正在启动" : "启动任务"}
           </Button>
         </FieldGroup>
       </CardContent>
@@ -600,6 +706,146 @@ function TaskLauncher({
         resultsByBlock={taskResults}
         onOpenChange={setIsResultOpen}
       />
+    </Card>
+  )
+}
+
+interface PluginModulesPanelProps {
+  modules: PluginModule[]
+  isUploading: boolean
+  isReloading: boolean
+  onUpload: (file: File) => void
+  onReloadAll: () => void
+  onReload: (key: string) => void
+  onDelete: (key: string) => void
+}
+
+function PluginModulesPanel({
+  modules,
+  isUploading,
+  isReloading,
+  onUpload,
+  onReloadAll,
+  onReload,
+  onDelete,
+}: PluginModulesPanelProps) {
+  const uploadInputRef = useRef<HTMLInputElement>(null)
+  const busy = isUploading || isReloading
+
+  return (
+    <Card className="h-full min-h-0">
+      <CardHeader>
+        <CardTitle>任务插件</CardTitle>
+        <CardDescription>已安装的动态任务模块。</CardDescription>
+        <CardAction>
+          <div className="flex items-center gap-2">
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept="application/zip,.zip"
+              className="sr-only"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                event.currentTarget.value = ""
+                if (file) {
+                  onUpload(file)
+                }
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => uploadInputRef.current?.click()}
+              disabled={busy}
+            >
+              <UploadIcon data-icon="inline-start" />
+              {isUploading ? "正在上传" : "上传插件包"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onReloadAll}
+              disabled={busy}
+            >
+              <RefreshCwIcon data-icon="inline-start" />
+              重载
+            </Button>
+          </div>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="min-h-0 flex-1 overflow-y-auto">
+        {modules.length === 0 ? (
+          <Alert>
+            <PackageIcon />
+            <AlertTitle>暂无插件</AlertTitle>
+            <AlertDescription>上传插件包后会显示在这里。</AlertDescription>
+          </Alert>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>模块</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>入口</TableHead>
+                <TableHead>版本</TableHead>
+                <TableHead>错误</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {modules.map((module) => (
+                <TableRow key={module.key}>
+                  <TableCell>
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <span className="font-medium">{module.name || module.key}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{module.key}</span>
+                      {module.description ? (
+                        <span className="max-w-96 truncate text-xs text-muted-foreground">
+                          {module.description}
+                        </span>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge status={module.status} />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{module.entry || "-"}</TableCell>
+                  <TableCell>{module.version || "-"}</TableCell>
+                  <TableCell className="max-w-96 truncate text-xs text-muted-foreground">
+                    {module.error || "-"}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onReload(module.key)}
+                        disabled={busy}
+                        aria-label={`重载 ${module.key}`}
+                      >
+                        <RefreshCwIcon />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onDelete(module.key)}
+                        disabled={busy}
+                        aria-label={`删除 ${module.key}`}
+                      >
+                        <Trash2Icon />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
     </Card>
   )
 }
@@ -654,8 +900,8 @@ function TaskConfigSheet({
         style={{ width: "min(96vw, 960px)", maxWidth: "96vw" }}
       >
         <SheetHeader>
-          <SheetTitle>Task configuration</SheetTitle>
-          <SheetDescription>Grouped runtime settings for the selected task.</SheetDescription>
+          <SheetTitle>任务配置</SheetTitle>
+          <SheetDescription>当前任务的分组运行参数。</SheetDescription>
         </SheetHeader>
 
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 pb-2 xl:grid-cols-[200px_minmax(0,1fr)]">
@@ -688,7 +934,7 @@ function TaskConfigSheet({
                   <div className="flex flex-col gap-1">
                     <div className="text-base font-medium">{activeBlock.name}</div>
                     <div className="text-sm text-muted-foreground">
-                      {activeBlock.fields.length} fields · {getBlockStats(activeBlock, config).missingRequired} required missing
+                      {activeBlock.fields.length} 个字段 · 缺少 {getBlockStats(activeBlock, config).missingRequired} 个必填项
                     </div>
                   </div>
                   <Badge variant="outline">{activeBlock.fields.length}</Badge>
@@ -711,7 +957,7 @@ function TaskConfigSheet({
                 </FieldGroup>
               </FieldSet>
             ) : (
-              <div className="p-4 text-sm text-muted-foreground">No configuration blocks.</div>
+              <div className="p-4 text-sm text-muted-foreground">暂无配置分组。</div>
             )}
           </div>
         </div>
@@ -733,7 +979,7 @@ function TaskConfigSheet({
             />
             <Button type="button" variant="outline" onClick={onConfigExport} disabled={blocks.length === 0}>
               <DownloadIcon data-icon="inline-start" />
-              Export
+              导出
             </Button>
             <Button
               type="button"
@@ -742,11 +988,11 @@ function TaskConfigSheet({
               disabled={blocks.length === 0}
             >
               <UploadIcon data-icon="inline-start" />
-              Import
+              导入
             </Button>
           </div>
           <Button onClick={onDone} disabled={isSaving}>
-            {isSaving ? "Saving" : "Done"}
+            {isSaving ? "正在保存" : "完成"}
           </Button>
         </SheetFooter>
       </SheetContent>
@@ -757,7 +1003,7 @@ function TaskConfigSheet({
 interface TaskResultSheetProps {
   open: boolean
   resultBlocks: TaskResultBlock[]
-  resultsByBlock: Record<string, TaskResult[]>
+  resultsByBlock: Record<string, TaskResultGroup[]>
   onOpenChange: (value: boolean) => void
 }
 
@@ -788,15 +1034,15 @@ function TaskResultSheet({
         style={{ width: "min(96vw, 960px)", maxWidth: "96vw" }}
       >
         <SheetHeader>
-          <SheetTitle>Task result</SheetTitle>
-          <SheetDescription>Local database results declared by the task manifest.</SheetDescription>
+          <SheetTitle>任务结果</SheetTitle>
+          <SheetDescription>任务 manifest 声明的本地数据库结果。</SheetDescription>
         </SheetHeader>
 
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 pb-2 xl:grid-cols-[200px_minmax(0,1fr)]">
           <nav className="flex min-w-0 gap-2 overflow-x-auto xl:flex-col xl:overflow-x-visible">
             {resultBlocks.map((block) => {
               const isActive = block.key === activeBlock?.key
-              const count = resultsByBlock[block.key]?.length ?? 0
+              const count = countGroupedResults(resultsByBlock[block.key] ?? [])
 
               return (
                 <Button
@@ -832,55 +1078,76 @@ function TaskResultSheet({
   )
 }
 
-function TaskResultPanel({ block, results }: { block: TaskResultBlock; results: TaskResult[] }) {
+function TaskResultPanel({ block, results }: { block: TaskResultBlock; results: TaskResultGroup[] }) {
+  const total = countGroupedResults(results)
+
   return (
     <section className="flex min-w-0 flex-col gap-3">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
           <div className="text-base font-medium">{block.label}</div>
           <div className="text-sm text-muted-foreground">
-            {block.description || "Task result records from local runs."}
+            {block.description || "本地运行产生的任务结果记录。"}
           </div>
         </div>
-        <Badge variant="secondary">{results.length} 条</Badge>
+        <Badge variant="secondary">{total} 条</Badge>
       </div>
 
-      {results.length === 0 ? (
+      {total === 0 ? (
         <Alert>
           <AlertTitle>暂无支付结果</AlertTitle>
           <AlertDescription>任务提交 cards 后会在这里显示结果。</AlertDescription>
         </Alert>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Status</TableHead>
-              <TableHead>Card</TableHead>
-              <TableHead>Item</TableHead>
-              <TableHead>Time</TableHead>
-              <TableHead>Message</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {results.map((result, index) => (
-              <TableRow key={`${formatResultValue(result.run_id)}-${formatResultValue(result.id)}-${index}`}>
-                <TableCell>
-                  <StatusBadge status={formatResultValue(result.status)} />
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {formatPaymentCard(result)}
-                </TableCell>
-                <TableCell>{formatResultValue(result.item_index)}</TableCell>
-                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                  {formatResultTime(result)}
-                </TableCell>
-                <TableCell className="max-w-80 truncate">
-                  {formatResultValue(result.message)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="flex min-w-0 flex-col gap-4">
+          {results.map((group) => (
+            <section key={group.runId} className="min-w-0 rounded-lg border">
+              <div className="flex items-start justify-between gap-3 border-b bg-muted/30 px-3 py-2">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{formatRunResultTitle(group)}</span>
+                    <StatusBadge status={group.status} />
+                    <Badge variant="secondary">{group.results.length} 条</Badge>
+                  </div>
+                  <span className="truncate font-mono text-xs text-muted-foreground">{group.runId}</span>
+                </div>
+                <div className="shrink-0 text-xs text-muted-foreground">
+                  {formatDateTime(group.createdAt)}
+                </div>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>状态</TableHead>
+                    <TableHead>卡号</TableHead>
+                    <TableHead>任务项</TableHead>
+                    <TableHead>时间</TableHead>
+                    <TableHead>消息</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {group.results.map((result, index) => (
+                    <TableRow key={`${group.runId}-${formatResultValue(result.id)}-${index}`}>
+                      <TableCell>
+                        <StatusBadge status={formatResultValue(result.status)} />
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {formatPaymentCard(result)}
+                      </TableCell>
+                      <TableCell>{formatResultValue(result.item_index)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {formatResultTime(result)}
+                      </TableCell>
+                      <TableCell className="max-w-80 truncate">
+                        {formatResultValue(result.message)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </section>
+          ))}
+        </div>
       )}
     </section>
   )
@@ -905,7 +1172,7 @@ function TaskConfigControl({ field, value, onChange }: TaskConfigControlProps) {
       <FieldLabel htmlFor={id} className="flex-wrap">
         <span className="min-w-0 break-words">{field.label}</span>
         {lineCount !== null ? <Badge variant="secondary">{lineCount} 行</Badge> : null}
-        {field.required ? <Badge variant="outline">Required</Badge> : null}
+        {field.required ? <Badge variant="outline">必填</Badge> : null}
       </FieldLabel>
       {field.field_type === "textarea" ? (
         <Textarea
@@ -997,7 +1264,7 @@ function TaskConfigMultiSelect({
 
 function RunRecords({ runs, onRefresh }: { runs: TaskRun[]; onRefresh: () => void }) {
   return (
-    <Card>
+    <Card className="h-full min-h-0">
       <CardHeader>
         <CardTitle>运行记录</CardTitle>
         <CardDescription>每次任务运行都会记录浏览器窗口和任务项状态。</CardDescription>
@@ -1008,8 +1275,8 @@ function RunRecords({ runs, onRefresh }: { runs: TaskRun[]; onRefresh: () => voi
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent>
-        <div className="flex flex-col gap-5">
+      <CardContent className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex flex-col gap-4">
           {runs.length === 0 ? (
             <Alert>
               <Rows3Icon />
@@ -1041,7 +1308,7 @@ function RunRecord({ run }: { run: TaskRun }) {
           <p className="truncate text-sm text-muted-foreground">{run.id}</p>
         </div>
         <div className="text-sm text-muted-foreground">
-          {run.completed}/{run.total} completed · {run.failed} failed · concurrency {run.concurrency}
+          已完成 {run.completed}/{run.total} · 失败 {run.failed} · 并发 {run.concurrency}
         </div>
       </div>
 
@@ -1050,12 +1317,12 @@ function RunRecord({ run }: { run: TaskRun }) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Item</TableHead>
-            <TableHead>Window ID</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Debug address</TableHead>
+            <TableHead>任务项</TableHead>
+            <TableHead>窗口 ID</TableHead>
+            <TableHead>状态</TableHead>
+            <TableHead>调试地址</TableHead>
             <TableHead>PID</TableHead>
-            <TableHead>Message</TableHead>
+            <TableHead>消息</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -1085,12 +1352,12 @@ function RunRecord({ run }: { run: TaskRun }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Item</TableHead>
-                  <TableHead>Key</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Line</TableHead>
-                  <TableHead>Message</TableHead>
+                  <TableHead>任务项</TableHead>
+                  <TableHead>键名</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>时间</TableHead>
+                  <TableHead>原始行</TableHead>
+                  <TableHead>消息</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1127,15 +1394,38 @@ function BrowserHealthBadge({ status }: { status: "checking" | "online" | "offli
   return (
     <Badge variant={variant}>
       <ActivityIcon data-icon="inline-start" />
-      BitBrowser {status}
+      BitBrowser {formatStatusLabel(status)}
     </Badge>
   )
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const variant = status === "failed" ? "destructive" : ["completed", "online", "success"].includes(status) ? "default" : "secondary"
+  const variant = ["failed", "error"].includes(status) ? "destructive" : ["completed", "loaded", "online", "success"].includes(status) ? "default" : "secondary"
 
-  return <Badge variant={variant}>{status}</Badge>
+  return <Badge variant={variant}>{formatStatusLabel(status)}</Badge>
+}
+
+function formatStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    add_different_card: "需要换卡",
+    checking: "检查中",
+    completed: "已完成",
+    error: "错误",
+    failed: "失败",
+    loaded: "已加载",
+    offline: "离线",
+    online: "在线",
+    pending: "等待中",
+    payment_issue: "支付异常",
+    running: "运行中",
+    stopped: "已停止",
+    stopping: "停止中",
+    success: "成功",
+    timeout: "超时",
+    validation_error: "校验失败",
+  }
+
+  return labels[status] ?? status
 }
 
 function getErrorMessage(error: unknown): string {
@@ -1158,16 +1448,16 @@ function downloadJsonFile(filename: string, data: unknown) {
 
 function parseTaskConfigImport(value: unknown, currentTaskKey: string) {
   if (!isRecord(value)) {
-    throw new Error("Task configuration import must be a JSON object.")
+    throw new Error("导入的任务配置必须是 JSON 对象。")
   }
 
   if (isTaskConfigExport(value)) {
     if (typeof value.task_key === "string" && value.task_key !== currentTaskKey) {
-      throw new Error(`Imported configuration is for task "${value.task_key}", not "${currentTaskKey}".`)
+      throw new Error(`导入的配置属于任务 "${value.task_key}"，不是当前任务 "${currentTaskKey}"。`)
     }
 
     if (!isRecord(value.config)) {
-      throw new Error("Task configuration import is missing a valid config object.")
+      throw new Error("导入的任务配置缺少有效的 config 对象。")
     }
 
     return value.config
@@ -1297,6 +1587,10 @@ function formatResultTime(result: Record<string, unknown>) {
     return "-"
   }
 
+  return formatDateTime(value)
+}
+
+function formatDateTime(value: string) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) {
     return value
@@ -1308,24 +1602,40 @@ function formatResultTime(result: Record<string, unknown>) {
 function collectTaskResults(
   runs: TaskRun[],
   resultBlocks: TaskResultBlock[],
-): Record<string, TaskResult[]> {
+  taskKey: string,
+): Record<string, TaskResultGroup[]> {
   return Object.fromEntries(
     resultBlocks.map((block) => [
       block.key,
       runs
-        .flatMap((run) =>
-          (run.result_json ?? [])
+        .filter((run) => run.task_key === taskKey)
+        .map((run) => ({
+          runId: run.id,
+          taskName: run.task_name,
+          status: run.status,
+          createdAt: run.created_at,
+          results: (run.result_json ?? [])
             .filter((result) => result.key === block.source_key)
             .map((result) => ({
               ...result,
               run_id: run.id,
               run_status: run.status,
               run_created_at: run.created_at,
-            })),
-        )
-        .sort((left, right) => Date.parse(formatRawResultTime(right)) - Date.parse(formatRawResultTime(left))),
+            }))
+            .sort((left, right) => Date.parse(formatRawResultTime(right)) - Date.parse(formatRawResultTime(left))),
+        }))
+        .filter((group) => group.results.length > 0)
+        .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)),
     ]),
   )
+}
+
+function countGroupedResults(groups: TaskResultGroup[]) {
+  return groups.reduce((total, group) => total + group.results.length, 0)
+}
+
+function formatRunResultTitle(group: TaskResultGroup) {
+  return group.taskName || "任务执行"
 }
 
 function formatPaymentCard(result: TaskResult) {

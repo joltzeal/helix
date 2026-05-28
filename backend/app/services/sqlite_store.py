@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from app.core.paths import get_data_dir
+
 
 class SQLiteStore:
     def __init__(self, db_path: Path | None = None) -> None:
-        self.db_path = db_path or Path("runtime") / "helix.sqlite3"
+        self.db_path = db_path or _default_db_path()
         self._lock = RLock()
         self._init_db()
 
@@ -119,6 +122,13 @@ class SQLiteStore:
             run["result_json"] = json.loads(str(row["result_json"] or "[]"))
             runs.append(run)
         return runs
+
+
+def _default_db_path() -> Path:
+    if data_dir := os.getenv("UCARD_DATA_DIR"):
+        return Path(data_dir) / "helix.sqlite3"
+
+    return get_data_dir() / "helix.sqlite3"
 
 
 sqlite_store = SQLiteStore()

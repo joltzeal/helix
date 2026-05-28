@@ -30,6 +30,16 @@ class TaskModuleResponse(BaseModel):
     result_blocks: list[TaskResultBlockResponse] = Field(default_factory=list)
 
 
+class PluginModuleResponse(BaseModel):
+    key: str
+    name: str
+    version: str = ""
+    description: str = ""
+    entry: str = ""
+    status: str
+    error: str = ""
+
+
 class TaskRunCreateRequest(BaseModel):
     task_key: str
     vendor: str = "bit_browser"
