@@ -575,7 +575,7 @@ function LogPanel({ logs }: { logs: TaskRunLog[] }) {
         <LogViewerTerminal
           title="任务运行"
           filterable
-          maxHeight={620}
+          className="h-full"
           entries={logs.map((log) => ({
             level: log.level,
             message: log.message,

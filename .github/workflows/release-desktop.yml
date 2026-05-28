@@ -151,7 +151,6 @@ jobs:
             --paths backend \
             "${PYINSTALLER_COLLECT_ARGS[@]}" \
             "${PYINSTALLER_HIDDEN_IMPORTS[@]}" \
-            --exclude-module app.task_modules.uber \
             backend/app/run.py
 
           if [[ "$RUNNER_OS" == "Windows" ]]; then

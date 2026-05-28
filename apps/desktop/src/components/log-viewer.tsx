@@ -72,11 +72,11 @@ const DEFAULT_LEVEL_COLORS: Record<LogLevel, LevelColors> = {
 }
 
 const LEVEL_LABELS: Record<LogLevel, string> = {
-  error: "错",
-  warn: "警",
-  info: "信",
-  debug: "调",
-  verbose: "详",
+  error: "ERR",
+  warn: "WRN",
+  info: "INF",
+  debug: "DBG",
+  verbose: "VRB",
 }
 
 function resolveLevelColors(
@@ -335,7 +335,7 @@ function LogViewerTerminalPlain({
     <div
       data-slot="log-viewer-terminal"
       className={cn(
-        "flex flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm",
+        "flex min-h-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm",
         className
       )}
       {...props}
@@ -417,7 +417,7 @@ function LogViewerTerminalPlain({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="overflow-auto bg-card font-mono text-xs leading-relaxed [scrollbar-width:thin]"
+        className="min-h-0 flex-1 overflow-auto bg-card font-mono text-xs leading-relaxed [scrollbar-width:thin]"
         style={{ maxHeight }}
         role="log"
         aria-live="polite"
@@ -515,7 +515,7 @@ function LogViewerMinimal({
     <div
       data-slot="log-viewer-minimal"
       className={cn(
-        "flex flex-col overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm",
+        "flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/60 bg-card shadow-sm",
         className
       )}
       {...props}
@@ -523,7 +523,7 @@ function LogViewerMinimal({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="overflow-auto font-mono text-xs leading-relaxed [scrollbar-width:thin]"
+        className="min-h-0 flex-1 overflow-auto font-mono text-xs leading-relaxed [scrollbar-width:thin]"
         style={{ maxHeight }}
         role="log"
         aria-live="polite"
@@ -656,7 +656,7 @@ function LogViewerFilterable({
     <div
       data-slot="log-viewer-filterable"
       className={cn(
-        "flex flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm",
+        "flex min-h-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm",
         className
       )}
       {...props}
@@ -758,7 +758,7 @@ function LogViewerFilterable({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="overflow-auto font-mono text-xs leading-relaxed [scrollbar-width:thin]"
+        className="min-h-0 flex-1 overflow-auto font-mono text-xs leading-relaxed [scrollbar-width:thin]"
         style={{ maxHeight }}
         role="log"
         aria-live="polite"
