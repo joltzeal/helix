@@ -120,35 +120,54 @@ function App() {
 
   useEffect(() => {
     let disposed = false
-    const socket = new WebSocket(api.runsWsUrl())
+    let socket: WebSocket | null = null
+    let retryTimer = 0
+    let retryCount = 0
 
-    socket.onopen = () => {
-      if (disposed) {
-        socket.close()
-        return
+    const connect = () => {
+      socket = new WebSocket(api.runsWsUrl())
+
+      socket.onopen = () => {
+        if (disposed) {
+          socket?.close()
+          return
+        }
+        retryCount = 0
+        setError((current) => (isBackendConnectionMessage(current) ? null : current))
       }
-      setError((current) => (current === "运行状态连接失败。" ? null : current))
+
+      socket.onmessage = (event) => {
+        if (disposed) {
+          return
+        }
+        const run = JSON.parse(event.data) as TaskRun
+        setRuns((current) => upsertRun(current, run))
+        setLogsByRunId((current) => mergeRunLogs(current, run.id, run.logs))
+        setActiveRunId((current) => current ?? run.id)
+      }
+
+      socket.onerror = () => {
+        socket?.close()
+      }
+
+      socket.onclose = () => {
+        if (disposed) {
+          return
+        }
+        retryCount += 1
+        setError(retryCount < 20 ? "后端正在启动，请稍候。" : "运行状态连接失败。")
+        retryTimer = window.setTimeout(connect, Math.min(1000 + retryCount * 250, 5000))
+      }
     }
 
-    socket.onmessage = (event) => {
-      if (disposed) {
-        return
-      }
-      const run = JSON.parse(event.data) as TaskRun
-      setRuns((current) => upsertRun(current, run))
-      setLogsByRunId((current) => mergeRunLogs(current, run.id, run.logs))
-      setActiveRunId((current) => current ?? run.id)
-    }
-
-    socket.onerror = () => {
-      if (!disposed) {
-        setError("运行状态连接失败。")
-      }
-    }
+    connect()
 
     return () => {
       disposed = true
-      closeWebSocket(socket)
+      window.clearTimeout(retryTimer)
+      if (socket) {
+        closeWebSocket(socket)
+      }
     }
   }, [])
 
@@ -158,33 +177,54 @@ function App() {
     }
 
     let disposed = false
-    const socket = new WebSocket(api.runLogsWsUrl(activeRunId))
+    let socket: WebSocket | null = null
+    let retryTimer = 0
+    let retryCount = 0
 
-    socket.onopen = () => {
-      if (disposed) {
-        socket.close()
-        return
+    const connect = () => {
+      socket = new WebSocket(api.runLogsWsUrl(activeRunId))
+
+      socket.onopen = () => {
+        if (disposed) {
+          socket?.close()
+          return
+        }
+        retryCount = 0
+        setError((current) => (current === "日志连接失败。" ? null : current))
       }
-      setError((current) => (current === "日志连接失败。" ? null : current))
+
+      socket.onmessage = (event) => {
+        if (disposed) {
+          return
+        }
+        const log = JSON.parse(event.data) as TaskRunLog
+        setLogsByRunId((current) => mergeRunLogs(current, activeRunId, [log]))
+      }
+
+      socket.onerror = () => {
+        socket?.close()
+      }
+
+      socket.onclose = () => {
+        if (disposed) {
+          return
+        }
+        retryCount += 1
+        if (retryCount >= 20) {
+          setError("日志连接失败。")
+        }
+        retryTimer = window.setTimeout(connect, Math.min(1000 + retryCount * 250, 5000))
+      }
     }
 
-    socket.onmessage = (event) => {
-      if (disposed) {
-        return
-      }
-      const log = JSON.parse(event.data) as TaskRunLog
-      setLogsByRunId((current) => mergeRunLogs(current, activeRunId, [log]))
-    }
-
-    socket.onerror = () => {
-      if (!disposed) {
-        setError("日志连接失败。")
-      }
-    }
+    connect()
 
     return () => {
       disposed = true
-      closeWebSocket(socket)
+      window.clearTimeout(retryTimer)
+      if (socket) {
+        closeWebSocket(socket)
+      }
     }
   }, [activeRunId])
 
@@ -218,6 +258,11 @@ function App() {
   }, [selectedTask])
 
   async function loadInitialData() {
+    const ready = await waitForApiReady()
+    if (!ready) {
+      setError("后端启动超时，请重新打开应用或查看 sidecar 日志。")
+      return
+    }
     await Promise.all([refreshTasks(), refreshRuns(), refreshPluginModules(), checkBrowserHealth()])
   }
 
@@ -1435,6 +1480,28 @@ function getErrorMessage(error: unknown): string {
     return error.message
   }
   return String(error)
+}
+
+function isBackendConnectionMessage(message: string | null) {
+  return message === "后端正在启动，请稍候。" || message === "运行状态连接失败。"
+}
+
+async function waitForApiReady() {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    try {
+      const health = await api.checkApiHealth()
+      if (health.ok) {
+        return true
+      }
+    } catch {
+      await delay(1000)
+    }
+  }
+  return false
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
 function downloadJsonFile(filename: string, data: unknown) {

@@ -46,6 +46,10 @@ export interface BrowserHealthResponse {
   ok: boolean
 }
 
+export interface ApiHealthResponse {
+  ok: boolean
+}
+
 export interface TaskRunItem {
   id: string
   item_index: number
@@ -142,6 +146,7 @@ function parseErrorMessage(text: string) {
 }
 
 export const api = {
+  checkApiHealth: () => apiFetch<ApiHealthResponse>("/health"),
   checkBrowserHealth: (vendor = "bit_browser") =>
     apiFetch<BrowserHealthResponse>(`/api/browsers/health/${vendor}`, {
       method: "POST",
