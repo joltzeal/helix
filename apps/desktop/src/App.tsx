@@ -63,6 +63,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import { AutoUpdateDialog } from "@/components/auto-update-dialog"
 import { LogViewerTerminal } from "@/components/log-viewer"
 import {
   api,
@@ -513,6 +514,7 @@ function App() {
 
         {content}
       </div>
+      <AutoUpdateDialog />
     </main>
   )
 }

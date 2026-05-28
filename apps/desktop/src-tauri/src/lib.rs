@@ -130,7 +130,9 @@ fn kill_api_sidecar<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|_app| {
             #[cfg(not(debug_assertions))]
             if let Err(error) = spawn_api_sidecar(_app) {

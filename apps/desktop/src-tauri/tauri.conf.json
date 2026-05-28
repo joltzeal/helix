@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/helix-api"
     ],
@@ -45,5 +46,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFBNDAwRjk1QkE4Qjg4QkQKUldTOWlJdTZsUTlBcXRVSVlwREFXck91eCtNbnZyaEg1Ri9LZzBIYjl1RHpSNXREMVRtMlY0TUMK",
+      "endpoints": [
+        "https://github.com/joltzeal/helix/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

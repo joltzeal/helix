@@ -76,6 +76,30 @@ jobs:
         working-directory: apps/desktop
         run: pnpm install --frozen-lockfile
 
+      - name: Sync desktop version from release tag
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const version = process.env.RELEASE_TAG.replace(/^v/, "");
+            if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
+              throw new Error(`Invalid release tag version: ${process.env.RELEASE_TAG}`);
+            }
+
+            for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {
+              const json = JSON.parse(fs.readFileSync(file, "utf8"));
+              json.version = version;
+              fs.writeFileSync(file, `${JSON.stringify(json, null, 2)}\n`);
+            }
+
+            const cargoFile = "src-tauri/Cargo.toml";
+            const cargo = fs.readFileSync(cargoFile, "utf8");
+            fs.writeFileSync(cargoFile, cargo.replace(/^version = ".*"$/m, `version = "${version}"`));
+          '
+
       - name: Build backend sidecar
         shell: bash
         env:
@@ -100,9 +124,11 @@ jobs:
           fi
 
       - name: Build and publish Tauri release
-        uses: tauri-apps/tauri-action@action-v0.6.2
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           args: ${{ matrix.args }}
@@ -112,3 +138,5 @@ jobs:
           releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
