@@ -155,7 +155,7 @@ function App() {
           return
         }
         retryCount += 1
-        setError(retryCount < 20 ? "后端正在启动，请稍候。" : "运行状态连接失败。")
+        setError(retryCount < 20 ? "程序正在启动，请稍候。" : "运行状态连接失败。")
         retryTimer = window.setTimeout(connect, Math.min(1000 + retryCount * 250, 5000))
       }
     }
@@ -260,7 +260,7 @@ function App() {
   async function loadInitialData() {
     const ready = await waitForApiReady()
     if (!ready) {
-      setError("后端启动超时，请重新打开应用或查看 sidecar 日志。")
+      setError("程序启动超时，请重启应用。")
       return
     }
     await Promise.all([refreshTasks(), refreshRuns(), refreshPluginModules(), checkBrowserHealth()])
@@ -1483,7 +1483,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 function isBackendConnectionMessage(message: string | null) {
-  return message === "后端正在启动，请稍候。" || message === "运行状态连接失败。"
+  return ["后端正在启动，请稍候。", "程序正在启动，请稍候。", "应用正在启动，请稍候。", "运行状态连接失败。"].includes(message ?? "")
 }
 
 async function waitForApiReady() {

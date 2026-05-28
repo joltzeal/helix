@@ -127,6 +127,22 @@ jobs:
             --collect-all uvicorn
             --collect-all websockets
           )
+          PYINSTALLER_HIDDEN_IMPORTS=(
+            --hidden-import collections.abc
+            --hidden-import dataclasses
+            --hidden-import enum
+            --hidden-import html
+            --hidden-import html.entities
+            --hidden-import html.parser
+            --hidden-import json
+            --hidden-import random
+            --hidden-import re
+            --hidden-import string
+            --hidden-import time
+            --hidden-import typing
+            --hidden-import urllib
+            --hidden-import urllib.parse
+          )
 
           uv run pyinstaller \
             --clean \
@@ -134,6 +150,7 @@ jobs:
             --name "helix-api-${TARGET_TRIPLE}" \
             --paths backend \
             "${PYINSTALLER_COLLECT_ARGS[@]}" \
+            "${PYINSTALLER_HIDDEN_IMPORTS[@]}" \
             --exclude-module app.task_modules.uber \
             backend/app/run.py
 
