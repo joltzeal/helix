@@ -176,6 +176,19 @@ wheels = [
 ]
 
 [[package]]
+name = "downloadkit"
+version = "2.0.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "datarecorder" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6b/35/9bbaed54f5d170b1fd8bcfdd3ce5e24ea71f4cac5026a37e6b21ab69726e/DownloadKit-2.0.7.tar.gz", hash = "sha256:601e423d1d4d0bd3e933524d06c913e744577d455990ec20afc3fb1f79aea9a7", size = 17488, upload-time = "2024-11-30T01:24:30.539Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/89/979ad2407eb8e0a2ac67461b7bec7db8627218fe3ba287db49636ca0a60c/DownloadKit-2.0.7-py3-none-any.whl", hash = "sha256:55b142d26b4e7ae01fff2181991c92aca9b895f75e2cd8a54f4a3b48c50b90b4", size = 21706, upload-time = "2024-11-30T01:24:17.599Z" },
+]
+
+[[package]]
 name = "drissionget"
 version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -330,6 +343,7 @@ dependencies = [
     { name = "alembic" },
     { name = "apscheduler" },
     { name = "datarecorder" },
+    { name = "downloadkit" },
     { name = "drissionpage" },
     { name = "faker" },
     { name = "fastapi" },
@@ -355,6 +369,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.18.4" },
     { name = "apscheduler", specifier = ">=3.11.2" },
     { name = "datarecorder", specifier = ">=3.6.2" },
+    { name = "downloadkit", specifier = ">=2.0.7" },
     { name = "drissionpage", specifier = ">=4.1.1.2" },
     { name = "faker", specifier = ">=40.19.1" },
     { name = "fastapi", specifier = ">=0.136.3" },

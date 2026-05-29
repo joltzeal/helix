@@ -8,6 +8,7 @@ dependencies = [
     "alembic>=1.18.4",
     "apscheduler>=3.11.2",
     "datarecorder>=3.6.2",
+    "downloadkit>=2.0.7",
     "drissionpage>=4.1.1.2",
     "faker>=40.19.1",
     "fastapi>=0.136.3",
