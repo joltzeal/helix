@@ -1,19 +1,5 @@
-import { invoke } from "@tauri-apps/api/core"
-
-let apiBasePromise: Promise<string> | null = null
-
-async function getApiBase() {
-  if (import.meta.env.VITE_API_BASE_URL) {
-    return import.meta.env.VITE_API_BASE_URL
-  }
-
-  apiBasePromise ??= invoke<string>("api_endpoint").catch(() => "http://127.0.0.1:8765")
-  return apiBasePromise
-}
-
-async function getWsBase() {
-  return (await getApiBase()).replace(/^http/, "ws")
-}
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8765"
+const WS_BASE = API_BASE.replace(/^http/, "ws")
 
 export type TaskFieldType = "text" | "password" | "number" | "textarea" | "select" | "multi-select" | "checkbox"
 export type LogLevel = "info" | "warn" | "error" | "debug" | "verbose"
@@ -124,7 +110,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   let response: Response
 
   try {
-    response = await fetch(`${await getApiBase()}${path}`, {
+    response = await fetch(`${API_BASE}${path}`, {
       ...init,
       headers: isFormData
         ? init?.headers
@@ -209,8 +195,8 @@ export const api = {
     }),
   listRuns: () => apiFetch<TaskRun[]>("/api/tasks/runs"),
   listRunLogs: (runId: string) => apiFetch<TaskRunLog[]>(`/api/tasks/runs/${runId}/logs`),
-  runsWsUrl: async () => `${await getWsBase()}/api/tasks/runs/ws`,
-  runLogsWsUrl: async (runId: string) => `${await getWsBase()}/api/tasks/runs/${runId}/logs/ws`,
+  runsWsUrl: () => `${WS_BASE}/api/tasks/runs/ws`,
+  runLogsWsUrl: (runId: string) => `${WS_BASE}/api/tasks/runs/${runId}/logs/ws`,
   createRun: (payload: CreateTaskRunPayload) =>
     apiFetch<TaskRun>("/api/tasks/runs", {
       method: "POST",
