@@ -125,39 +125,52 @@ function App() {
     let retryCount = 0
 
     const connect = () => {
-      socket = new WebSocket(api.runsWsUrl())
+      void api
+        .runsWsUrl()
+        .then((url) => {
+          if (disposed) {
+            return
+          }
 
-      socket.onopen = () => {
-        if (disposed) {
-          socket?.close()
-          return
-        }
-        retryCount = 0
-        setError((current) => (isBackendConnectionMessage(current) ? null : current))
-      }
+          socket = new WebSocket(url)
 
-      socket.onmessage = (event) => {
-        if (disposed) {
-          return
-        }
-        const run = JSON.parse(event.data) as TaskRun
-        setRuns((current) => upsertRun(current, run))
-        setLogsByRunId((current) => mergeRunLogs(current, run.id, run.logs))
-        setActiveRunId((current) => current ?? run.id)
-      }
+          socket.onopen = () => {
+            if (disposed) {
+              socket?.close()
+              return
+            }
+            retryCount = 0
+            setError((current) => (isBackendConnectionMessage(current) ? null : current))
+          }
 
-      socket.onerror = () => {
-        socket?.close()
-      }
+          socket.onmessage = (event) => {
+            if (disposed) {
+              return
+            }
+            const run = JSON.parse(event.data) as TaskRun
+            setRuns((current) => upsertRun(current, run))
+            setLogsByRunId((current) => mergeRunLogs(current, run.id, run.logs))
+            setActiveRunId((current) => current ?? run.id)
+          }
 
-      socket.onclose = () => {
-        if (disposed) {
-          return
-        }
-        retryCount += 1
-        setError(retryCount < 20 ? "程序正在启动，请稍候。" : "运行状态连接失败。")
-        retryTimer = window.setTimeout(connect, Math.min(1000 + retryCount * 250, 5000))
-      }
+          socket.onerror = () => {
+            socket?.close()
+          }
+
+          socket.onclose = () => {
+            if (disposed) {
+              return
+            }
+            retryCount += 1
+            setError(retryCount < 20 ? "程序正在启动，请稍候。" : "运行状态连接失败。")
+            retryTimer = window.setTimeout(connect, Math.min(1000 + retryCount * 250, 5000))
+          }
+        })
+        .catch(() => {
+          if (!disposed) {
+            retryTimer = window.setTimeout(connect, 1000)
+          }
+        })
     }
 
     connect()
@@ -182,39 +195,52 @@ function App() {
     let retryCount = 0
 
     const connect = () => {
-      socket = new WebSocket(api.runLogsWsUrl(activeRunId))
+      void api
+        .runLogsWsUrl(activeRunId)
+        .then((url) => {
+          if (disposed) {
+            return
+          }
 
-      socket.onopen = () => {
-        if (disposed) {
-          socket?.close()
-          return
-        }
-        retryCount = 0
-        setError((current) => (current === "日志连接失败。" ? null : current))
-      }
+          socket = new WebSocket(url)
 
-      socket.onmessage = (event) => {
-        if (disposed) {
-          return
-        }
-        const log = JSON.parse(event.data) as TaskRunLog
-        setLogsByRunId((current) => mergeRunLogs(current, activeRunId, [log]))
-      }
+          socket.onopen = () => {
+            if (disposed) {
+              socket?.close()
+              return
+            }
+            retryCount = 0
+            setError((current) => (current === "日志连接失败。" ? null : current))
+          }
 
-      socket.onerror = () => {
-        socket?.close()
-      }
+          socket.onmessage = (event) => {
+            if (disposed) {
+              return
+            }
+            const log = JSON.parse(event.data) as TaskRunLog
+            setLogsByRunId((current) => mergeRunLogs(current, activeRunId, [log]))
+          }
 
-      socket.onclose = () => {
-        if (disposed) {
-          return
-        }
-        retryCount += 1
-        if (retryCount >= 20) {
-          setError("日志连接失败。")
-        }
-        retryTimer = window.setTimeout(connect, Math.min(1000 + retryCount * 250, 5000))
-      }
+          socket.onerror = () => {
+            socket?.close()
+          }
+
+          socket.onclose = () => {
+            if (disposed) {
+              return
+            }
+            retryCount += 1
+            if (retryCount >= 20) {
+              setError("日志连接失败。")
+            }
+            retryTimer = window.setTimeout(connect, Math.min(1000 + retryCount * 250, 5000))
+          }
+        })
+        .catch(() => {
+          if (!disposed) {
+            retryTimer = window.setTimeout(connect, 1000)
+          }
+        })
     }
 
     connect()

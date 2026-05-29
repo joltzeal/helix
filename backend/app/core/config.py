@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     app_name: str = "Helix"
     api_host: str = "127.0.0.1"
     api_port: int = 8765
-    api_reload: bool = True
+    api_reload: bool = False
 
     bitbrowser_base_url: str = Field(
         default="http://127.0.0.1:54345",
