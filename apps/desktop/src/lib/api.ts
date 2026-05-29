@@ -107,15 +107,21 @@ export interface TaskConfigurationResponse {
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: isFormData
-      ? init?.headers
-      : {
-          "Content-Type": "application/json",
-          ...init?.headers,
-        },
-  })
+  let response: Response
+
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: isFormData
+        ? init?.headers
+        : {
+            "Content-Type": "application/json",
+            ...init?.headers,
+          },
+    })
+  } catch (caught) {
+    throw new Error(`无法连接后端服务：${getNetworkErrorMessage(caught)}`)
+  }
 
   if (!response.ok) {
     const text = await response.text()
@@ -123,6 +129,13 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   return response.json() as Promise<T>
+}
+
+function getNetworkErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
 }
 
 function parseErrorMessage(text: string) {

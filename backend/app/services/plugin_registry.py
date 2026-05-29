@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import sys
 import zipfile
@@ -96,7 +97,7 @@ class PluginRegistry:
 
             if destination.exists():
                 shutil.rmtree(destination)
-            temporary.replace(destination)
+            shutil.move(str(temporary), str(destination))
         except Exception:
             if temporary.exists():
                 shutil.rmtree(temporary)
@@ -311,7 +312,7 @@ def _common_root_prefix(names: list[str]) -> str:
 def _validate_plugin_key(key: str) -> str:
     if not key:
         raise PluginError("Plugin key is required.")
-    if not key.replace("-", "_").isalnum():
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
         raise PluginError("Plugin key may only contain letters, numbers, hyphens, and underscores.")
     return key
 

@@ -113,19 +113,36 @@ jobs:
           PYINSTALLER_COLLECT_ARGS=(
             --collect-all alembic
             --collect-all apscheduler
+            --collect-all certifi
+            --collect-all charset_normalizer
+            --collect-all cssselect
+            --collect-all DataRecorder
+            --collect-all DownloadKit
             --collect-all DrissionPage
+            --collect-all DrissionGet
+            --collect-all DrissionRecord
             --collect-all faker
             --collect-all fastapi
+            --collect-all filelock
             --collect-all httpx
             --collect-all loguru
+            --collect-all lxml
             --collect-all multipart
+            --collect-all openpyxl
             --collect-all phone_gen
+            --collect-all psutil
             --collect-all pydantic
             --collect-all pydantic_settings
+            --collect-all requests
+            --collect-all requests_file
             --collect-all sqlalchemy
             --collect-all sqlmodel
+            --collect-all tldextract
+            --collect-all urllib3
             --collect-all uvicorn
+            --collect-all websocket
             --collect-all websockets
+            --collect-submodules app.task_modules.uber
           )
           PYINSTALLER_HIDDEN_IMPORTS=(
             --hidden-import collections.abc
@@ -154,8 +171,11 @@ jobs:
             backend/app/run.py
 
           if [[ "$RUNNER_OS" == "Windows" ]]; then
+            UCARD_API_IMPORT_CHECK=1 "dist/helix-api-${TARGET_TRIPLE}.exe"
             mv "dist/helix-api-${TARGET_TRIPLE}.exe" "apps/desktop/src-tauri/binaries/helix-api-${TARGET_TRIPLE}.exe"
           else
+            chmod +x "dist/helix-api-${TARGET_TRIPLE}"
+            UCARD_API_IMPORT_CHECK=1 "dist/helix-api-${TARGET_TRIPLE}"
             mv "dist/helix-api-${TARGET_TRIPLE}" "apps/desktop/src-tauri/binaries/helix-api-${TARGET_TRIPLE}"
             chmod +x "apps/desktop/src-tauri/binaries/helix-api-${TARGET_TRIPLE}"
           fi

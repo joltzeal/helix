@@ -31,6 +31,8 @@ async def upload_plugin_module(file: UploadFile = File(...)) -> dict:
         record = plugin_registry.install_zip(temporary_path)
     except PluginError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"插件上传失败：{exc}") from exc
     finally:
         temporary_path.unlink(missing_ok=True)
 
