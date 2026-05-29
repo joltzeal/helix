@@ -146,15 +146,7 @@ jobs:
           )
           PYINSTALLER_HIDDEN_IMPORTS=(
             --hidden-import collections.abc
-            --hidden-import DataRecorder
-            --hidden-import DataRecorder.tools
             --hidden-import dataclasses
-            --hidden-import DownloadKit
-            --hidden-import DrissionGet
-            --hidden-import DrissionPage
-            --hidden-import DrissionPage._configs.chromium_options
-            --hidden-import DrissionPage._pages.chromium_page
-            --hidden-import DrissionRecord
             --hidden-import enum
             --hidden-import html
             --hidden-import html.entities
