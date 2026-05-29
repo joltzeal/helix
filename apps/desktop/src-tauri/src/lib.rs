@@ -127,14 +127,8 @@ fn log_sidecar_message(message: &str) {
 #[cfg(not(debug_assertions))]
 fn send_backend_post(endpoint: &str, path: &str, read_timeout: Duration) -> std::io::Result<()> {
     let host = endpoint.strip_prefix("http://").unwrap_or(endpoint);
-    let address = host
-        .strip_prefix("http://")
-        .parse()
-        .expect("valid backend address");
-    let mut stream = TcpStream::connect_timeout(
-        &address,
-        Duration::from_secs(2),
-    )?;
+    let address = host.parse().expect("valid backend address");
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2))?;
     stream.set_read_timeout(Some(read_timeout))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let request = format!(
