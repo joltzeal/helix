@@ -1998,9 +1998,9 @@ function formatRunResultTitle(group: TaskResultGroup) {
 }
 
 function formatPaymentCard(result: TaskResult) {
-  const last4 = result.card_last4
-  if (typeof last4 === "string" && last4) {
-    return `****${last4}`
+  const cardNumber = result.card_last4
+  if (typeof cardNumber === "string" && cardNumber) {
+    return cardNumber
   }
 
   return formatResultValue(result.line)
