@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BrowserStartRequest(BaseModel):
@@ -18,6 +18,20 @@ class BrowserStopRequest(BaseModel):
 class BrowserStatusRequest(BaseModel):
     vendor: str = Field(default="bit_browser")
     profile_id: str
+
+
+class BrowserArrangeWindowsRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    vendor: str = Field(default="bit_browser")
+    profile_ids: list[str] = Field(default_factory=list)
+    start_x: int = Field(default=0, alias="startX")
+    start_y: int = Field(default=0, alias="startY")
+    width: int = Field(default=500, ge=1)
+    height: int = Field(default=950, ge=1)
+    col: int = Field(default=3, ge=1)
+    space_x: int = Field(default=-200, alias="spaceX")
+    space_y: int = Field(default=0, alias="spaceY")
 
 
 class BrowserLaunchResponse(BaseModel):

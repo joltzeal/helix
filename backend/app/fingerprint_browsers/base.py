@@ -64,3 +64,18 @@ class FingerprintBrowserClient(ABC):
     @abstractmethod
     async def get_profile_status(self, profile_id: str) -> str:
         raise NotImplementedError
+
+    @abstractmethod
+    async def arrange_windows(
+        self,
+        profile_ids: list[str],
+        *,
+        start_x: int = 0,
+        start_y: int = 0,
+        width: int = 500,
+        height: int = 950,
+        col: int = 3,
+        space_x: int = -200,
+        space_y: int = 0,
+    ) -> None:
+        raise NotImplementedError

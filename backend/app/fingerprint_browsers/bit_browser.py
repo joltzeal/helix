@@ -109,21 +109,29 @@ class BitBrowserClient(FingerprintBrowserClient):
 
         return "stopped"
 
-    async def arrange_windows(self, profile_ids: list[str], *, width: int = 500, height: int = 950, col: int = 3) -> None:
-        if not profile_ids:
-            return
-
+    async def arrange_windows(
+        self,
+        profile_ids: list[str],
+        *,
+        start_x: int = 0,
+        start_y: int = 0,
+        width: int = 500,
+        height: int = 950,
+        col: int = 3,
+        space_x: int = -200,
+        space_y: int = 0,
+    ) -> None:
         await self._post(
             "/windowbounds",
             {
                 "type": "box",
-                "startX": 0,
-                "startY": 0,
+                "startX": start_x,
+                "startY": start_y,
                 "width": max(width, 400),
                 "height": max(height, 900),
                 "col": max(col, 1),
-                "spaceX": -200,
-                "spaceY": 0,
+                "spaceX": space_x,
+                "spaceY": space_y,
                 "offsetX": 0,
                 "offsetY": 50,
                 "orderBy": "asc",

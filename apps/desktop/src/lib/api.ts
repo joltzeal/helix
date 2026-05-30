@@ -46,6 +46,18 @@ export interface BrowserHealthResponse {
   ok: boolean
 }
 
+export interface BrowserArrangeWindowsPayload {
+  vendor: string
+  profile_ids?: string[]
+  startX: number
+  startY: number
+  width: number
+  height: number
+  col: number
+  spaceX: number
+  spaceY: number
+}
+
 export interface ApiHealthResponse {
   ok: boolean
 }
@@ -163,6 +175,11 @@ export const api = {
   checkBrowserHealth: (vendor = "bit_browser") =>
     apiFetch<BrowserHealthResponse>(`/api/browsers/health/${vendor}`, {
       method: "POST",
+    }),
+  arrangeBrowserWindows: (payload: BrowserArrangeWindowsPayload) =>
+    apiFetch<{ ok: boolean }>("/api/browsers/arrange-windows", {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
   listTasks: () => apiFetch<TaskModule[]>("/api/tasks"),
   listPluginModules: () => apiFetch<PluginModule[]>("/api/task-modules"),

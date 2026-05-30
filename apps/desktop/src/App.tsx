@@ -1,7 +1,10 @@
 import { createListCollection } from "@ark-ui/react"
+import { getVersion } from "@tauri-apps/api/app"
+import { isTauri } from "@tauri-apps/api/core"
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIcon,
+  ChevronDownIcon,
   DownloadIcon,
   PackageIcon,
   Settings2Icon,
@@ -26,6 +29,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Field,
   FieldDescription,
@@ -65,6 +83,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { AutoUpdateDialog } from "@/components/auto-update-dialog"
 import { LogViewerTerminal } from "@/components/log-viewer"
+import packageJson from "../package.json"
 import {
   api,
   type PluginModule,
@@ -76,8 +95,22 @@ import {
 } from "@/lib/api"
 
 const VENDOR = "bit_browser"
+const PACKAGE_VERSION = packageJson.version
+const WINDOW_ARRANGE_STORAGE_KEY = "helix.windowArrangeSettings"
+const DEFAULT_WINDOW_ARRANGE_SETTINGS = {
+  startX: 0,
+  startY: 0,
+  width: 500,
+  height: 950,
+  col: 3,
+  spaceX: -200,
+  spaceY: 0,
+}
+
 type Page = "launcher" | "records" | "modules"
 type TaskResult = Record<string, unknown>
+type WindowArrangeSettingKey = keyof typeof DEFAULT_WINDOW_ARRANGE_SETTINGS
+type WindowArrangeSettings = Record<WindowArrangeSettingKey, number>
 interface TaskResultGroup {
   runId: string
   taskName: string
@@ -103,6 +136,11 @@ function App() {
   const [isSavingConfig, setIsSavingConfig] = useState(false)
   const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
   const [isReloadingPlugins, setIsReloadingPlugins] = useState(false)
+  const [isArrangeDialogOpen, setIsArrangeDialogOpen] = useState(false)
+  const [isArrangingWindows, setIsArrangingWindows] = useState(false)
+  const [windowArrangeSettings, setWindowArrangeSettings] = useState<WindowArrangeSettings>(() => loadWindowArrangeSettings())
+  const [windowArrangeDraft, setWindowArrangeDraft] = useState<WindowArrangeSettings>(windowArrangeSettings)
+  const [appVersion, setAppVersion] = useState(PACKAGE_VERSION)
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.key === selectedTaskKey) ?? tasks[0],
@@ -116,6 +154,31 @@ function App() {
 
   useEffect(() => {
     void loadInitialData()
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) {
+      return
+    }
+
+    let disposed = false
+
+    async function loadAppVersion() {
+      try {
+        const version = await getVersion()
+        if (!disposed && version) {
+          setAppVersion(version)
+        }
+      } catch (caught) {
+        console.warn("Failed to load app version", caught)
+      }
+    }
+
+    void loadAppVersion()
+
+    return () => {
+      disposed = true
+    }
   }, [])
 
   useEffect(() => {
@@ -311,6 +374,40 @@ function App() {
       setBrowserHealth(result.ok ? "online" : "offline")
     } catch {
       setBrowserHealth("offline")
+    }
+  }
+
+  function openArrangeWindowsDialog() {
+    setWindowArrangeDraft(windowArrangeSettings)
+    setIsArrangeDialogOpen(true)
+  }
+
+  function updateWindowArrangeDraft(key: WindowArrangeSettingKey, value: number) {
+    setWindowArrangeDraft((current) => ({
+      ...current,
+      [key]: value,
+    }))
+  }
+
+  async function arrangeWindows() {
+    setError(null)
+    setIsArrangingWindows(true)
+
+    const nextSettings = sanitizeWindowArrangeSettings(windowArrangeDraft)
+
+    try {
+      await api.arrangeBrowserWindows({
+        vendor: VENDOR,
+        ...nextSettings,
+      })
+      saveWindowArrangeSettings(nextSettings)
+      setWindowArrangeSettings(nextSettings)
+      setWindowArrangeDraft(nextSettings)
+      setIsArrangeDialogOpen(false)
+    } catch (caught) {
+      setError(getErrorMessage(caught))
+    } finally {
+      setIsArrangingWindows(false)
     }
   }
 
@@ -518,7 +615,7 @@ function App() {
         <header className="flex shrink-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-col gap-1">
             <h1 className="text-2xl font-semibold tracking-normal">Helix 自动化控制台</h1>
-            <p className="text-sm text-muted-foreground">指纹浏览器状态、任务启动和实时任务日志。</p>
+            <p className="text-sm text-muted-foreground">v{appVersion}</p>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -547,6 +644,23 @@ function App() {
               <RefreshCwIcon data-icon="inline-start" />
               刷新
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button variant="outline">
+                    <Settings2Icon data-icon="inline-start" />
+                    操作
+                    <ChevronDownIcon data-icon="inline-end" />
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuItem onClick={openArrangeWindowsDialog}>
+                  <Rows3Icon />
+                  重排窗口
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
@@ -559,8 +673,139 @@ function App() {
 
         {content}
       </div>
+      <ArrangeWindowsDialog
+        open={isArrangeDialogOpen}
+        settings={windowArrangeDraft}
+        isArranging={isArrangingWindows}
+        onOpenChange={setIsArrangeDialogOpen}
+        onSettingChange={updateWindowArrangeDraft}
+        onSubmit={() => void arrangeWindows()}
+      />
       <AutoUpdateDialog />
     </main>
+  )
+}
+
+interface ArrangeWindowsDialogProps {
+  open: boolean
+  settings: WindowArrangeSettings
+  isArranging: boolean
+  onOpenChange: (value: boolean) => void
+  onSettingChange: (key: WindowArrangeSettingKey, value: number) => void
+  onSubmit: () => void
+}
+
+function ArrangeWindowsDialog({
+  open,
+  settings,
+  isArranging,
+  onOpenChange,
+  onSettingChange,
+  onSubmit,
+}: ArrangeWindowsDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg" showCloseButton={!isArranging}>
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onSubmit()
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>重排窗口</DialogTitle>
+            <DialogDescription>Box 模式会按起点、尺寸、列数和间距重新排列当前浏览器窗口。</DialogDescription>
+          </DialogHeader>
+
+          <FieldGroup className="grid gap-3 sm:grid-cols-2">
+            <WindowArrangeNumberField
+              id="window-arrange-start-x"
+              label="startX"
+              value={settings.startX}
+              onChange={(value) => onSettingChange("startX", value)}
+            />
+            <WindowArrangeNumberField
+              id="window-arrange-start-y"
+              label="startY"
+              value={settings.startY}
+              onChange={(value) => onSettingChange("startY", value)}
+            />
+            <WindowArrangeNumberField
+              id="window-arrange-width"
+              label="width"
+              value={settings.width}
+              min={400}
+              onChange={(value) => onSettingChange("width", value)}
+            />
+            <WindowArrangeNumberField
+              id="window-arrange-height"
+              label="height"
+              value={settings.height}
+              min={900}
+              onChange={(value) => onSettingChange("height", value)}
+            />
+            <WindowArrangeNumberField
+              id="window-arrange-col"
+              label="col"
+              value={settings.col}
+              min={1}
+              onChange={(value) => onSettingChange("col", value)}
+            />
+            <WindowArrangeNumberField
+              id="window-arrange-space-x"
+              label="spaceX"
+              value={settings.spaceX}
+              onChange={(value) => onSettingChange("spaceX", value)}
+            />
+            <WindowArrangeNumberField
+              id="window-arrange-space-y"
+              label="spaceY"
+              value={settings.spaceY}
+              onChange={(value) => onSettingChange("spaceY", value)}
+            />
+          </FieldGroup>
+
+          <DialogFooter>
+            <DialogClose render={<Button type="button" variant="outline" disabled={isArranging} />}>
+              取消
+            </DialogClose>
+            <Button type="submit" disabled={isArranging}>
+              {isArranging ? "正在重排" : "重排窗口"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+interface WindowArrangeNumberFieldProps {
+  id: string
+  label: string
+  value: number
+  min?: number
+  onChange: (value: number) => void
+}
+
+function WindowArrangeNumberField({
+  id,
+  label,
+  value,
+  min,
+  onChange,
+}: WindowArrangeNumberFieldProps) {
+  return (
+    <Field className="min-w-0">
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
+        type="number"
+        min={min}
+        value={value}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+      />
+    </Field>
   )
 }
 
@@ -1481,6 +1726,50 @@ function getErrorMessage(error: unknown): string {
     return error.message
   }
   return String(error)
+}
+
+function loadWindowArrangeSettings(): WindowArrangeSettings {
+  try {
+    const rawValue = window.localStorage.getItem(WINDOW_ARRANGE_STORAGE_KEY)
+    if (!rawValue) {
+      return DEFAULT_WINDOW_ARRANGE_SETTINGS
+    }
+
+    const parsed = JSON.parse(rawValue) as unknown
+    if (!isRecord(parsed)) {
+      return DEFAULT_WINDOW_ARRANGE_SETTINGS
+    }
+
+    return sanitizeWindowArrangeSettings({
+      ...DEFAULT_WINDOW_ARRANGE_SETTINGS,
+      ...Object.fromEntries(
+        Object.entries(parsed).map(([key, value]) => [key, normalizeWindowArrangeNumber(value)]),
+      ),
+    })
+  } catch {
+    return DEFAULT_WINDOW_ARRANGE_SETTINGS
+  }
+}
+
+function saveWindowArrangeSettings(settings: WindowArrangeSettings) {
+  window.localStorage.setItem(WINDOW_ARRANGE_STORAGE_KEY, JSON.stringify(settings))
+}
+
+function sanitizeWindowArrangeSettings(settings: WindowArrangeSettings): WindowArrangeSettings {
+  return {
+    startX: normalizeWindowArrangeNumber(settings.startX),
+    startY: normalizeWindowArrangeNumber(settings.startY),
+    width: Math.max(normalizeWindowArrangeNumber(settings.width), 400),
+    height: Math.max(normalizeWindowArrangeNumber(settings.height), 900),
+    col: Math.max(normalizeWindowArrangeNumber(settings.col), 1),
+    spaceX: normalizeWindowArrangeNumber(settings.spaceX),
+    spaceY: normalizeWindowArrangeNumber(settings.spaceY),
+  }
+}
+
+function normalizeWindowArrangeNumber(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number(value)
+  return Number.isFinite(numberValue) ? Math.trunc(numberValue) : 0
 }
 
 function isBackendConnectionMessage(message: string | null) {

@@ -4,6 +4,7 @@ from app.fingerprint_browsers.base import BrowserLaunchOptions
 from app.fingerprint_browsers.bit_browser import BitBrowserError
 from app.fingerprint_browsers.factory import create_fingerprint_browser_client
 from app.schemas.browser import (
+    BrowserArrangeWindowsRequest,
     BrowserLaunchResponse,
     BrowserStartRequest,
     BrowserStatusRequest,
@@ -73,3 +74,23 @@ async def get_browser_profile_status(payload: BrowserStatusRequest) -> BrowserSt
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return BrowserStatusResponse(profile_id=payload.profile_id, status=status)
+
+
+@router.post("/arrange-windows")
+async def arrange_browser_windows(payload: BrowserArrangeWindowsRequest) -> dict[str, bool]:
+    client = create_fingerprint_browser_client(payload.vendor)
+    try:
+        await client.arrange_windows(
+            payload.profile_ids,
+            start_x=payload.start_x,
+            start_y=payload.start_y,
+            width=payload.width,
+            height=payload.height,
+            col=payload.col,
+            space_x=payload.space_x,
+            space_y=payload.space_y,
+        )
+    except BitBrowserError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return {"ok": True}
