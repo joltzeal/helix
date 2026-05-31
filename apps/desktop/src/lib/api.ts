@@ -98,7 +98,7 @@ export interface TaskRun {
   failed: number
   config: Record<string, unknown>
   items: TaskRunItem[]
-  logs: TaskRunLog[]
+  logs?: TaskRunLog[]
   result_json: Record<string, unknown>[]
   created_at: string
   started_at: string | null
@@ -211,7 +211,8 @@ export const api = {
       body: JSON.stringify({ config }),
     }),
   listRuns: () => apiFetch<TaskRun[]>("/api/tasks/runs"),
-  listRunLogs: (runId: string) => apiFetch<TaskRunLog[]>(`/api/tasks/runs/${runId}/logs`),
+  listRunLogs: (runId: string, limit = 1000) =>
+    apiFetch<TaskRunLog[]>(`/api/tasks/runs/${runId}/logs?limit=${limit}`),
   runsWsUrl: () => `${WS_BASE}/api/tasks/runs/ws`,
   runLogsWsUrl: (runId: string) => `${WS_BASE}/api/tasks/runs/${runId}/logs/ws`,
   createRun: (payload: CreateTaskRunPayload) =>

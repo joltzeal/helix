@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import json
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from threading import RLock
 from typing import Any, Literal
 from uuid import uuid4
 
+from app.core.paths import get_data_dir
 from app.services.log_hub import log_event_hub, run_event_hub
 from app.services.sqlite_store import sqlite_store
 
 LogLevel = Literal["info", "warn", "error", "debug", "verbose"]
+LOG_MEMORY_LIMIT = 1000
 
 
 def utc_now() -> str:
@@ -102,7 +106,7 @@ class RunStore:
             self._runs[run.id] = run
         event = self.to_dict(run)
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
         return run
 
     def list_runs(self) -> list[TaskRunRecord]:
@@ -137,7 +141,7 @@ class RunStore:
             event = self.to_dict(run)
 
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
         return item
 
     def add_run_item_if_work_available(
@@ -163,7 +167,7 @@ class RunStore:
             event = self.to_dict(run)
 
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
         return item
 
     def has_config_textarea_lines(self, run_id: str, config_key: str) -> bool:
@@ -179,7 +183,7 @@ class RunStore:
             run.started_at = utc_now()
             event = self.to_dict(run)
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
         self.add_log(run_id, "info", "任务开始运行。")
 
     def mark_run_finished(self, run_id: str) -> None:
@@ -190,7 +194,7 @@ class RunStore:
             run.finished_at = utc_now()
             event = self.to_dict(run)
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
         self.add_log(run_id, "info", f"任务运行结束，状态：{run.status}。")
 
     def mark_run_stopping(self, run_id: str) -> None:
@@ -202,7 +206,7 @@ class RunStore:
                 run.status = "stopping"
                 event = self.to_dict(run)
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
         self.add_log(run_id, "warn", "已请求停止任务，正在取消后续操作。")
 
     def mark_run_stopped(self, run_id: str, message: str = "任务已停止。") -> None:
@@ -217,7 +221,7 @@ class RunStore:
                     item.finished_at = utc_now()
             event = self.to_dict(run)
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
         self.add_log(run_id, "warn", message)
 
     def mark_item_started(self, run_id: str, item_id: str) -> None:
@@ -297,14 +301,28 @@ class RunStore:
                 seq=seq,
             )
             run.logs.append(log)
+            if len(run.logs) > LOG_MEMORY_LIMIT:
+                run.logs = run.logs[-LOG_MEMORY_LIMIT:]
             event = self.to_dict(run)
 
+        _append_log_file(run_id, log)
         sqlite_store.save_task_run(event)
         log_event_hub.publish(run_id, asdict(log))
 
-    def list_logs(self, run_id: str) -> list[TaskRunLogRecord]:
+    def list_logs(
+        self, run_id: str, *, limit: int | None = None
+    ) -> list[TaskRunLogRecord]:
         with self._lock:
-            return list(self._runs[run_id].logs)
+            if run_id not in self._runs:
+                raise KeyError(run_id)
+            fallback_logs = list(self._runs[run_id].logs)
+
+        file_logs = _read_log_file(run_id, limit=limit)
+        if file_logs:
+            return file_logs
+        if limit is not None and limit > 0:
+            return fallback_logs[-limit:]
+        return fallback_logs
 
     def list_run_profile_ids(self, run_id: str) -> list[str]:
         with self._lock:
@@ -363,7 +381,7 @@ class RunStore:
             event = self.to_dict(run)
 
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
         return {
             "id": result_id,
             "line": selected_line,
@@ -395,10 +413,12 @@ class RunStore:
             event = self.to_dict(run)
 
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
 
-    def to_dict(self, run: TaskRunRecord) -> dict[str, Any]:
+    def to_dict(self, run: TaskRunRecord, *, include_logs: bool = False) -> dict[str, Any]:
         data = asdict(run)
+        if not include_logs:
+            data["logs"] = []
         data["total"] = len(run.items)
         data["completed"] = sum(1 for item in run.items if item.status == "completed")
         data["failed"] = sum(1 for item in run.items if item.status == "failed")
@@ -414,7 +434,7 @@ class RunStore:
             run = self._runs[run_id]
             event = self.to_dict(run)
         sqlite_store.save_task_run(event)
-        run_event_hub.publish("runs", event)
+        _publish_run_event(event)
 
 
 def _run_from_dict(data: dict[str, Any]) -> TaskRunRecord:
@@ -435,17 +455,6 @@ def _run_from_dict(data: dict[str, Any]) -> TaskRunRecord:
         )
         for item in data.get("items", [])
     ]
-    logs = [
-        TaskRunLogRecord(
-            id=str(log["id"]),
-            level=log.get("level", "info"),
-            message=str(log.get("message") or ""),
-            timestamp=str(log.get("timestamp") or utc_now()),
-            item_id=log.get("item_id"),
-            seq=_coerce_optional_int(log.get("seq")),
-        )
-        for log in data.get("logs", [])
-    ]
     return TaskRunRecord(
         id=str(data["id"]),
         task_key=str(data["task_key"]),
@@ -455,7 +464,7 @@ def _run_from_dict(data: dict[str, Any]) -> TaskRunRecord:
         concurrency=int(data.get("concurrency") or 1),
         config=dict(data.get("config") or {}),
         items=items,
-        logs=logs,
+        logs=[],
         result_json=list(data.get("result_json") or []),
         created_at=str(data.get("created_at") or utc_now()),
         started_at=data.get("started_at"),
@@ -481,6 +490,59 @@ def _mask_config_line(config_key: str, line: str) -> str:
         parts[2] = "***"
 
     return "|".join(parts)
+
+
+def _publish_run_event(event: dict[str, Any]) -> None:
+    payload = dict(event)
+    payload["logs"] = []
+    run_event_hub.publish("runs", payload)
+
+
+def _append_log_file(run_id: str, log: TaskRunLogRecord) -> None:
+    path = _log_file_path(run_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(asdict(log), ensure_ascii=False))
+        file.write("\n")
+
+
+def _read_log_file(run_id: str, *, limit: int | None = None) -> list[TaskRunLogRecord]:
+    path = _log_file_path(run_id)
+    if not path.exists():
+        return []
+
+    if limit is not None and limit > 0:
+        with path.open("r", encoding="utf-8") as file:
+            lines = deque(file, maxlen=limit)
+    else:
+        with path.open("r", encoding="utf-8") as file:
+            lines = list(file)
+
+    logs: list[TaskRunLogRecord] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        logs.append(_log_from_dict(payload))
+    return logs
+
+
+def _log_from_dict(data: dict[str, Any]) -> TaskRunLogRecord:
+    return TaskRunLogRecord(
+        id=str(data.get("id") or uuid4().hex),
+        level=data.get("level", "info"),
+        message=str(data.get("message") or ""),
+        timestamp=str(data.get("timestamp") or utc_now()),
+        item_id=data.get("item_id"),
+        seq=_coerce_optional_int(data.get("seq")),
+    )
+
+
+def _log_file_path(run_id: str):
+    return get_data_dir() / "logs" / f"{run_id}.jsonl"
 
 
 def _item_seq(run: TaskRunRecord, item_id: str | None) -> int | None:

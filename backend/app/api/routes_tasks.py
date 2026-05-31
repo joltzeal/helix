@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from app.schemas.tasks import (
     TaskConfigurationResponse,
@@ -98,7 +98,7 @@ async def create_task_run(payload: TaskRunCreateRequest) -> dict:
     except TaskControlError as exc:
         run_store.mark_run_stopped(run.id, str(exc))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return run_store.to_dict(run)
+    return run_store.to_dict(run, include_logs=False)
 
 
 @router.post("/runs/active/stop", response_model=TaskRunResponse)
@@ -106,7 +106,7 @@ async def stop_active_task_run() -> dict:
     run_id = await task_control.stop()
     if not run_id:
         raise HTTPException(status_code=404, detail="没有正在运行的任务。")
-    return run_store.to_dict(run_store.get_run(run_id))
+    return run_store.to_dict(run_store.get_run(run_id), include_logs=False)
 
 
 @router.post("/runs/{run_id}/stop", response_model=TaskRunResponse)
@@ -119,12 +119,15 @@ async def stop_task_run(run_id: str) -> dict:
     stopped_run_id = await task_control.stop(run_id)
     if not stopped_run_id:
         raise HTTPException(status_code=404, detail="没有正在运行的任务。")
-    return run_store.to_dict(run_store.get_run(stopped_run_id))
+    return run_store.to_dict(run_store.get_run(stopped_run_id), include_logs=False)
 
 
 @router.get("/runs", response_model=list[TaskRunResponse])
 async def list_task_runs() -> list[dict]:
-    return [run_store.to_dict(run) for run in run_store.list_runs()]
+    return [
+        run_store.to_dict(run, include_logs=False)
+        for run in run_store.list_runs()
+    ]
 
 
 @router.websocket("/runs/ws")
@@ -132,7 +135,7 @@ async def stream_task_runs(websocket: WebSocket) -> None:
     await websocket.accept()
 
     for run in run_store.list_runs():
-        await websocket.send_json(run_store.to_dict(run))
+        await websocket.send_json(run_store.to_dict(run, include_logs=False))
 
     queue = run_event_hub.subscribe("runs")
     try:
@@ -152,13 +155,16 @@ async def get_task_run(run_id: str) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Task run not found.") from exc
 
-    return run_store.to_dict(run)
+    return run_store.to_dict(run, include_logs=False)
 
 
 @router.get("/runs/{run_id}/logs", response_model=list[TaskRunLogResponse])
-async def get_task_run_logs(run_id: str) -> list[dict]:
+async def get_task_run_logs(
+    run_id: str,
+    limit: int = Query(default=1000, ge=1, le=10000),
+) -> list[dict]:
     try:
-        logs = run_store.list_logs(run_id)
+        logs = run_store.list_logs(run_id, limit=limit)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Task run not found.") from exc
 
@@ -180,7 +186,7 @@ async def stream_task_run_logs(websocket: WebSocket, run_id: str) -> None:
     await websocket.accept()
 
     try:
-        existing_logs = run_store.list_logs(run_id)
+        existing_logs = run_store.list_logs(run_id, limit=1000)
     except KeyError:
         await websocket.close(code=4404, reason="Task run not found.")
         return

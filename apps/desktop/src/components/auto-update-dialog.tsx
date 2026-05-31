@@ -2,7 +2,7 @@ import { isTauri } from "@tauri-apps/api/core"
 import { relaunch } from "@tauri-apps/plugin-process"
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater"
 import { DownloadIcon, RefreshCwIcon } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -16,18 +16,28 @@ import {
 import { Progress } from "@/components/ui/progress"
 
 type UpdateStatus = "available" | "downloading" | "installing" | "restarting" | "failed"
+export type UpdateCheckResult = "available" | "none" | "unavailable" | "failed"
 
 interface DownloadProgress {
   downloaded: number
   total?: number
 }
 
-export function AutoUpdateDialog() {
+interface AutoUpdateDialogProps {
+  checkRequestId?: number
+  onManualCheckComplete?: (result: UpdateCheckResult, message: string) => void
+}
+
+export function AutoUpdateDialog({
+  checkRequestId = 0,
+  onManualCheckComplete,
+}: AutoUpdateDialogProps) {
   const [open, setOpen] = useState(false)
   const [update, setUpdate] = useState<Update | null>(null)
   const [status, setStatus] = useState<UpdateStatus>("available")
   const [progress, setProgress] = useState<DownloadProgress>({ downloaded: 0 })
   const [error, setError] = useState<string | null>(null)
+  const lastManualCheckRequestRef = useRef(checkRequestId)
 
   const isBusy = status === "downloading" || status === "installing" || status === "restarting"
   const progressValue = progress.total
@@ -37,31 +47,33 @@ export function AutoUpdateDialog() {
       : 0
 
   useEffect(() => {
-    if (!isTauri() || import.meta.env.DEV) {
-      return
-    }
-
     let disposed = false
 
-    async function checkForUpdate() {
-      try {
-        const availableUpdate = await check()
-        if (!disposed && availableUpdate) {
-          setUpdate(availableUpdate)
-          setStatus("available")
-          setOpen(true)
-        }
-      } catch (caught) {
-        console.warn("Failed to check for updates", caught)
-      }
-    }
-
-    void checkForUpdate()
+    void checkForUpdate({ manual: false, isDisposed: () => disposed })
 
     return () => {
       disposed = true
     }
   }, [])
+
+  useEffect(() => {
+    if (checkRequestId <= 0 || checkRequestId === lastManualCheckRequestRef.current) {
+      return
+    }
+
+    lastManualCheckRequestRef.current = checkRequestId
+    let disposed = false
+
+    void checkForUpdate({
+      manual: true,
+      isDisposed: () => disposed,
+      onComplete: onManualCheckComplete,
+    })
+
+    return () => {
+      disposed = true
+    }
+  }, [checkRequestId, onManualCheckComplete])
 
   useEffect(() => {
     return () => {
@@ -88,6 +100,52 @@ export function AutoUpdateDialog() {
     } catch (caught) {
       setStatus("failed")
       setError(getErrorMessage(caught))
+    }
+  }
+
+  async function checkForUpdate({
+    manual,
+    isDisposed,
+    onComplete,
+  }: {
+    manual: boolean
+    isDisposed: () => boolean
+    onComplete?: (result: UpdateCheckResult, message: string) => void
+  }) {
+    if (!isTauri() || import.meta.env.DEV) {
+      if (manual && !isDisposed()) {
+        onComplete?.("unavailable", "当前环境不支持更新检测。")
+      }
+      return
+    }
+
+    try {
+      const availableUpdate = await check()
+      if (isDisposed()) {
+        availableUpdate?.close()
+        return
+      }
+
+      if (availableUpdate) {
+        setUpdate(availableUpdate)
+        setStatus("available")
+        setError(null)
+        setProgress({ downloaded: 0 })
+        setOpen(true)
+        if (manual) {
+          onComplete?.("available", `发现新版本 ${availableUpdate.version}。`)
+        }
+        return
+      }
+
+      if (manual) {
+        onComplete?.("none", "当前已是最新版本。")
+      }
+    } catch (caught) {
+      console.warn("Failed to check for updates", caught)
+      if (manual && !isDisposed()) {
+        onComplete?.("failed", getErrorMessage(caught))
+      }
     }
   }
 

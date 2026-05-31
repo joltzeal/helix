@@ -55,6 +55,7 @@ class SQLiteStore:
                 connection.execute(
                     "ALTER TABLE task_runs ADD COLUMN result_json TEXT NOT NULL DEFAULT '[]'"
                 )
+            self._strip_logs_from_task_runs(connection)
             connection.commit()
 
     def save_task_configuration(self, task_key: str, config: dict[str, Any]) -> None:
@@ -85,7 +86,9 @@ class SQLiteStore:
 
     def save_task_run(self, run: dict[str, Any]) -> None:
         now = _utc_now()
-        payload = json.dumps(run, ensure_ascii=False)
+        stored_run = dict(run)
+        stored_run.pop("logs", None)
+        payload = json.dumps(stored_run, ensure_ascii=False)
         result_payload = json.dumps(run.get("result_json") or [], ensure_ascii=False)
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -110,6 +113,23 @@ class SQLiteStore:
                 ),
             )
             connection.commit()
+
+    def _strip_logs_from_task_runs(self, connection: sqlite3.Connection) -> None:
+        rows = connection.execute(
+            "SELECT id, data_json FROM task_runs WHERE data_json LIKE '%\"logs\"%'"
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["data_json"]))
+            except json.JSONDecodeError:
+                continue
+            if "logs" not in payload:
+                continue
+            payload.pop("logs", None)
+            connection.execute(
+                "UPDATE task_runs SET data_json = ? WHERE id = ?",
+                (json.dumps(payload, ensure_ascii=False), row["id"]),
+            )
 
     def list_task_runs(self) -> list[dict[str, Any]]:
         with self._lock, self._connect() as connection:

@@ -1,9 +1,8 @@
 import { createListCollection } from "@ark-ui/react"
 import { getVersion } from "@tauri-apps/api/app"
 import { isTauri } from "@tauri-apps/api/core"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
-  ActivityIcon,
   ChevronDownIcon,
   DownloadIcon,
   PackageIcon,
@@ -13,7 +12,6 @@ import {
   ReceiptTextIcon,
   Rows3Icon,
   SquareIcon,
-  Trash2Icon,
   UploadIcon,
   WorkflowIcon,
 } from "lucide-react"
@@ -30,15 +28,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -53,7 +42,6 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
-import { Progress } from "@/components/ui/progress"
 import {
   Select,
   SelectContent,
@@ -81,8 +69,16 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
-import { AutoUpdateDialog } from "@/components/auto-update-dialog"
-import { LogViewerTerminal } from "@/components/log-viewer"
+import {
+  ArrangeWindowsDialog,
+  type WindowArrangeSettingKey,
+  type WindowArrangeSettings,
+} from "@/components/arrange-windows-dialog"
+import { AutoUpdateDialog, type UpdateCheckResult } from "@/components/auto-update-dialog"
+import { PluginModulesPanel } from "@/components/plugin-modules-panel"
+import { RunRecords } from "@/components/run-records"
+import { BrowserHealthBadge, StatusBadge } from "@/components/status-badge"
+import { TaskLogPanel } from "@/components/task-log-panel"
 import packageJson from "../package.json"
 import {
   api,
@@ -93,9 +89,16 @@ import {
   type TaskRun,
   type TaskRunLog,
 } from "@/lib/api"
+import {
+  API_START_TIMEOUT_MESSAGE,
+  API_STARTING_MESSAGE,
+  isBackendConnectionMessage,
+  useApiReady,
+} from "@/hooks/use-api-ready"
 
 const VENDOR = "bit_browser"
 const PACKAGE_VERSION = packageJson.version
+const MAX_LOGS_PER_RUN = 1000
 const WINDOW_ARRANGE_STORAGE_KEY = "helix.windowArrangeSettings"
 const DEFAULT_WINDOW_ARRANGE_SETTINGS = {
   startX: 0,
@@ -109,8 +112,6 @@ const DEFAULT_WINDOW_ARRANGE_SETTINGS = {
 
 type Page = "launcher" | "records" | "modules"
 type TaskResult = Record<string, unknown>
-type WindowArrangeSettingKey = keyof typeof DEFAULT_WINDOW_ARRANGE_SETTINGS
-type WindowArrangeSettings = Record<WindowArrangeSettingKey, number>
 interface TaskResultGroup {
   runId: string
   taskName: string
@@ -141,6 +142,23 @@ function App() {
   const [windowArrangeSettings, setWindowArrangeSettings] = useState<WindowArrangeSettings>(() => loadWindowArrangeSettings())
   const [windowArrangeDraft, setWindowArrangeDraft] = useState<WindowArrangeSettings>(windowArrangeSettings)
   const [appVersion, setAppVersion] = useState(PACKAGE_VERSION)
+  const [updateCheckRequestId, setUpdateCheckRequestId] = useState(0)
+  const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false)
+  const [updateCheckMessage, setUpdateCheckMessage] = useState<string | null>(null)
+  const handleApiStarting = useCallback(() => {
+    setError(API_STARTING_MESSAGE)
+  }, [])
+  const handleApiReady = useCallback(() => {
+    setError((current) => (isBackendConnectionMessage(current) ? null : current))
+  }, [])
+  const handleApiTimeout = useCallback(() => {
+    setError(API_START_TIMEOUT_MESSAGE)
+  }, [])
+  const { apiReady, checkApiReady } = useApiReady({
+    onStarting: handleApiStarting,
+    onReady: handleApiReady,
+    onTimeout: handleApiTimeout,
+  })
 
   const selectedTask = useMemo(
     () => tasks.find((task) => task.key === selectedTaskKey) ?? tasks[0],
@@ -153,8 +171,16 @@ function App() {
   )
 
   useEffect(() => {
+    void checkApiReady()
+  }, [checkApiReady])
+
+  useEffect(() => {
+    if (!apiReady) {
+      return
+    }
+
     void loadInitialData()
-  }, [])
+  }, [apiReady])
 
   useEffect(() => {
     if (!isTauri()) {
@@ -182,6 +208,10 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!apiReady) {
+      return
+    }
+
     let disposed = false
     let socket: WebSocket | null = null
     let retryTimer = 0
@@ -218,7 +248,7 @@ function App() {
           return
         }
         retryCount += 1
-        setError(retryCount < 20 ? "程序正在启动，请稍候。" : "运行状态连接失败。")
+        setError("运行状态连接失败。")
         retryTimer = window.setTimeout(connect, Math.min(1000 + retryCount * 250, 5000))
       }
     }
@@ -232,7 +262,7 @@ function App() {
         closeWebSocket(socket)
       }
     }
-  }, [])
+  }, [apiReady])
 
   useEffect(() => {
     if (!activeRunId) {
@@ -321,11 +351,6 @@ function App() {
   }, [selectedTask])
 
   async function loadInitialData() {
-    const ready = await waitForApiReady()
-    if (!ready) {
-      setError("程序启动超时，请重启应用。")
-      return
-    }
     await Promise.all([refreshTasks(), refreshRuns(), refreshPluginModules(), checkBrowserHealth()])
   }
 
@@ -376,6 +401,17 @@ function App() {
       setBrowserHealth("offline")
     }
   }
+
+  function requestUpdateCheck() {
+    setUpdateCheckMessage(null)
+    setIsCheckingForUpdate(true)
+    setUpdateCheckRequestId((current) => current + 1)
+  }
+
+  const handleManualUpdateCheckComplete = useCallback((result: UpdateCheckResult, message: string) => {
+    setIsCheckingForUpdate(false)
+    setUpdateCheckMessage(result === "failed" ? `更新检测失败：${message}` : message)
+  }, [])
 
   function openArrangeWindowsDialog() {
     setWindowArrangeDraft(windowArrangeSettings)
@@ -593,7 +629,7 @@ function App() {
         onStart={() => void startRun()}
         onStop={() => void stopRun()}
       />
-      <LogPanel logs={activeLogs} />
+      <TaskLogPanel logs={activeLogs} />
     </section>
   ) : page === "records" ? (
     <RunRecords runs={runs} onRefresh={() => void refreshRuns()} />
@@ -615,7 +651,22 @@ function App() {
         <header className="flex shrink-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-col gap-1">
             <h1 className="text-2xl font-semibold tracking-normal">Helix 自动化控制台</h1>
-            <p className="text-sm text-muted-foreground">v{appVersion}</p>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+              <span>v{appVersion}</span>
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto px-0 py-0 text-xs"
+                onClick={requestUpdateCheck}
+                disabled={isCheckingForUpdate}
+              >
+                {isCheckingForUpdate ? "检查中..." : "检查更新"}
+              </Button>
+              {updateCheckMessage ? (
+                <span className="text-xs">{updateCheckMessage}</span>
+              ) : null}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -681,155 +732,11 @@ function App() {
         onSettingChange={updateWindowArrangeDraft}
         onSubmit={() => void arrangeWindows()}
       />
-      <AutoUpdateDialog />
-    </main>
-  )
-}
-
-interface ArrangeWindowsDialogProps {
-  open: boolean
-  settings: WindowArrangeSettings
-  isArranging: boolean
-  onOpenChange: (value: boolean) => void
-  onSettingChange: (key: WindowArrangeSettingKey, value: number) => void
-  onSubmit: () => void
-}
-
-function ArrangeWindowsDialog({
-  open,
-  settings,
-  isArranging,
-  onOpenChange,
-  onSettingChange,
-  onSubmit,
-}: ArrangeWindowsDialogProps) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg" showCloseButton={!isArranging}>
-        <form
-          className="grid gap-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            onSubmit()
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>重排窗口</DialogTitle>
-            <DialogDescription>Box 模式会按起点、尺寸、列数和间距重新排列当前浏览器窗口。</DialogDescription>
-          </DialogHeader>
-
-          <FieldGroup className="grid gap-3 sm:grid-cols-2">
-            <WindowArrangeNumberField
-              id="window-arrange-start-x"
-              label="startX"
-              value={settings.startX}
-              onChange={(value) => onSettingChange("startX", value)}
-            />
-            <WindowArrangeNumberField
-              id="window-arrange-start-y"
-              label="startY"
-              value={settings.startY}
-              onChange={(value) => onSettingChange("startY", value)}
-            />
-            <WindowArrangeNumberField
-              id="window-arrange-width"
-              label="width"
-              value={settings.width}
-              min={400}
-              onChange={(value) => onSettingChange("width", value)}
-            />
-            <WindowArrangeNumberField
-              id="window-arrange-height"
-              label="height"
-              value={settings.height}
-              min={900}
-              onChange={(value) => onSettingChange("height", value)}
-            />
-            <WindowArrangeNumberField
-              id="window-arrange-col"
-              label="col"
-              value={settings.col}
-              min={1}
-              onChange={(value) => onSettingChange("col", value)}
-            />
-            <WindowArrangeNumberField
-              id="window-arrange-space-x"
-              label="spaceX"
-              value={settings.spaceX}
-              onChange={(value) => onSettingChange("spaceX", value)}
-            />
-            <WindowArrangeNumberField
-              id="window-arrange-space-y"
-              label="spaceY"
-              value={settings.spaceY}
-              onChange={(value) => onSettingChange("spaceY", value)}
-            />
-          </FieldGroup>
-
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" disabled={isArranging} />}>
-              取消
-            </DialogClose>
-            <Button type="submit" disabled={isArranging}>
-              {isArranging ? "正在重排" : "重排窗口"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-interface WindowArrangeNumberFieldProps {
-  id: string
-  label: string
-  value: number
-  min?: number
-  onChange: (value: number) => void
-}
-
-function WindowArrangeNumberField({
-  id,
-  label,
-  value,
-  min,
-  onChange,
-}: WindowArrangeNumberFieldProps) {
-  return (
-    <Field className="min-w-0">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input
-        id={id}
-        type="number"
-        min={min}
-        value={value}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
+      <AutoUpdateDialog
+        checkRequestId={updateCheckRequestId}
+        onManualCheckComplete={handleManualUpdateCheckComplete}
       />
-    </Field>
-  )
-}
-
-function LogPanel({ logs }: { logs: TaskRunLog[] }) {
-  return (
-    <Card className="h-full min-h-0">
-      <CardHeader>
-        <CardTitle>实时日志</CardTitle>
-        <CardDescription>按等级显示最近的任务运行日志。</CardDescription>
-      </CardHeader>
-      <CardContent className="min-h-0 flex-1">
-        <LogViewerTerminal
-          title="任务运行"
-          filterable
-          fill
-          className="h-full"
-          entries={logs.map((log) => ({
-            level: log.level,
-            message: log.message,
-            timestamp: log.timestamp,
-          }))}
-        />
-      </CardContent>
-    </Card>
+    </main>
   )
 }
 
@@ -999,146 +906,6 @@ function TaskLauncher({
         resultsByBlock={taskResults}
         onOpenChange={setIsResultOpen}
       />
-    </Card>
-  )
-}
-
-interface PluginModulesPanelProps {
-  modules: PluginModule[]
-  isUploading: boolean
-  isReloading: boolean
-  onUpload: (file: File) => void
-  onReloadAll: () => void
-  onReload: (key: string) => void
-  onDelete: (key: string) => void
-}
-
-function PluginModulesPanel({
-  modules,
-  isUploading,
-  isReloading,
-  onUpload,
-  onReloadAll,
-  onReload,
-  onDelete,
-}: PluginModulesPanelProps) {
-  const uploadInputRef = useRef<HTMLInputElement>(null)
-  const busy = isUploading || isReloading
-
-  return (
-    <Card className="h-full min-h-0">
-      <CardHeader>
-        <CardTitle>任务插件</CardTitle>
-        <CardDescription>已安装的动态任务模块。</CardDescription>
-        <CardAction>
-          <div className="flex items-center gap-2">
-            <input
-              ref={uploadInputRef}
-              type="file"
-              accept="application/zip,.zip"
-              className="sr-only"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0]
-                event.currentTarget.value = ""
-                if (file) {
-                  onUpload(file)
-                }
-              }}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => uploadInputRef.current?.click()}
-              disabled={busy}
-            >
-              <UploadIcon data-icon="inline-start" />
-              {isUploading ? "正在上传" : "上传插件包"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onReloadAll}
-              disabled={busy}
-            >
-              <RefreshCwIcon data-icon="inline-start" />
-              重载
-            </Button>
-          </div>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="min-h-0 flex-1 overflow-y-auto">
-        {modules.length === 0 ? (
-          <Alert>
-            <PackageIcon />
-            <AlertTitle>暂无插件</AlertTitle>
-            <AlertDescription>上传插件包后会显示在这里。</AlertDescription>
-          </Alert>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>模块</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>入口</TableHead>
-                <TableHead>版本</TableHead>
-                <TableHead>错误</TableHead>
-                <TableHead className="text-right">操作</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {modules.map((module) => (
-                <TableRow key={module.key}>
-                  <TableCell>
-                    <div className="flex min-w-0 flex-col gap-1">
-                      <span className="font-medium">{module.name || module.key}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{module.key}</span>
-                      {module.description ? (
-                        <span className="max-w-96 truncate text-xs text-muted-foreground">
-                          {module.description}
-                        </span>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <StatusBadge status={module.status} />
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{module.entry || "-"}</TableCell>
-                  <TableCell>{module.version || "-"}</TableCell>
-                  <TableCell className="max-w-96 truncate text-xs text-muted-foreground">
-                    {module.error || "-"}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onReload(module.key)}
-                        disabled={busy}
-                        aria-label={`重载 ${module.key}`}
-                      >
-                        <RefreshCwIcon />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onDelete(module.key)}
-                        disabled={busy}
-                        aria-label={`删除 ${module.key}`}
-                      >
-                        <Trash2Icon />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
     </Card>
   )
 }
@@ -1555,172 +1322,6 @@ function TaskConfigMultiSelect({
   )
 }
 
-function RunRecords({ runs, onRefresh }: { runs: TaskRun[]; onRefresh: () => void }) {
-  return (
-    <Card className="h-full min-h-0">
-      <CardHeader>
-        <CardTitle>运行记录</CardTitle>
-        <CardDescription>每次任务运行都会记录浏览器窗口和任务项状态。</CardDescription>
-        <CardAction>
-          <Button variant="outline" size="sm" onClick={onRefresh}>
-            <RefreshCwIcon data-icon="inline-start" />
-            刷新
-          </Button>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex flex-col gap-4">
-          {runs.length === 0 ? (
-            <Alert>
-              <Rows3Icon />
-              <AlertTitle>暂无运行记录</AlertTitle>
-              <AlertDescription>启动任务后会在这里看到持久化的运行记录。</AlertDescription>
-            </Alert>
-          ) : (
-            runs.map((run) => <RunRecord key={run.id} run={run} />)
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function RunRecord({ run }: { run: TaskRun }) {
-  const progress = run.total === 0 ? 0 : Math.round(((run.completed + run.failed) / run.total) * 100)
-  const resultJson = run.result_json ?? []
-
-  return (
-    <section className="flex flex-col gap-3 rounded-lg border p-3">
-      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-        <div className="flex min-w-0 flex-col gap-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{run.task_name}</span>
-            <StatusBadge status={run.status} />
-            <Badge variant="secondary">{run.vendor}</Badge>
-          </div>
-          <p className="truncate text-sm text-muted-foreground">{run.id}</p>
-        </div>
-        <div className="text-sm text-muted-foreground">
-          已完成 {run.completed}/{run.total} · 失败 {run.failed} · 并发 {run.concurrency}
-        </div>
-      </div>
-
-      <Progress value={progress} />
-
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>任务项</TableHead>
-            <TableHead>窗口 ID</TableHead>
-            <TableHead>状态</TableHead>
-            <TableHead>调试地址</TableHead>
-            <TableHead>PID</TableHead>
-            <TableHead>消息</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {run.items.map((item) => (
-            <TableRow key={item.id}>
-              <TableCell>{item.item_index}</TableCell>
-              <TableCell className="font-mono text-xs">{item.profile_id ?? "-"}</TableCell>
-              <TableCell>
-                <StatusBadge status={item.status} />
-              </TableCell>
-              <TableCell className="font-mono text-xs">{item.debug_address ?? "-"}</TableCell>
-              <TableCell>{item.pid ?? "-"}</TableCell>
-              <TableCell className="max-w-72 truncate">{item.error ?? item.message ?? "-"}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-
-      {resultJson.length > 0 ? (
-        <>
-          <Separator />
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-medium">结果记录</div>
-              <Badge variant="secondary">{resultJson.length} 条</Badge>
-            </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>任务项</TableHead>
-                  <TableHead>键名</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>时间</TableHead>
-                  <TableHead>原始行</TableHead>
-                  <TableHead>消息</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {resultJson.map((result, index) => (
-                  <TableRow key={String(result.id ?? index)}>
-                    <TableCell>{formatResultValue(result.item_index)}</TableCell>
-                    <TableCell className="font-mono text-xs">{formatResultValue(result.key)}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={formatResultValue(result.status)} />
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatResultTime(result)}
-                    </TableCell>
-                    <TableCell className="max-w-72 truncate font-mono text-xs">
-                      {formatResultValue(result.line)}
-                    </TableCell>
-                    <TableCell className="max-w-72 truncate">
-                      {formatResultValue(result.message)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </>
-      ) : null}
-    </section>
-  )
-}
-
-function BrowserHealthBadge({ status }: { status: "checking" | "online" | "offline" }) {
-  const variant = status === "online" ? "default" : status === "offline" ? "destructive" : "secondary"
-
-  return (
-    <Badge variant={variant}>
-      <ActivityIcon data-icon="inline-start" />
-      BitBrowser {formatStatusLabel(status)}
-    </Badge>
-  )
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const variant = ["failed", "error"].includes(status) ? "destructive" : ["completed", "loaded", "online", "success"].includes(status) ? "default" : "secondary"
-
-  return <Badge variant={variant}>{formatStatusLabel(status)}</Badge>
-}
-
-function formatStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    add_different_card: "需要换卡",
-    checking: "检查中",
-    completed: "已完成",
-    error: "错误",
-    failed: "失败",
-    loaded: "已加载",
-    offline: "离线",
-    online: "在线",
-    pending: "等待中",
-    payment_issue: "支付异常",
-    running: "运行中",
-    stopped: "已停止",
-    stopping: "停止中",
-    success: "成功",
-    timeout: "超时",
-    validation_error: "校验失败",
-  }
-
-  return labels[status] ?? status
-}
-
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message
@@ -1770,28 +1371,6 @@ function sanitizeWindowArrangeSettings(settings: WindowArrangeSettings): WindowA
 function normalizeWindowArrangeNumber(value: unknown) {
   const numberValue = typeof value === "number" ? value : Number(value)
   return Number.isFinite(numberValue) ? Math.trunc(numberValue) : 0
-}
-
-function isBackendConnectionMessage(message: string | null) {
-  return ["后端正在启动，请稍候。", "程序正在启动，请稍候。", "应用正在启动，请稍候。", "运行状态连接失败。"].includes(message ?? "")
-}
-
-async function waitForApiReady() {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    try {
-      const health = await api.checkApiHealth()
-      if (health.ok) {
-        return true
-      }
-    } catch {
-      await delay(1000)
-    }
-  }
-  return false
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
 function downloadJsonFile(filename: string, data: unknown) {
@@ -2043,9 +1622,10 @@ function upsertRun(runs: TaskRun[], run: TaskRun) {
 function mergeRunLogs(
   logsByRunId: Record<string, TaskRunLog[]>,
   runId: string,
-  logs: TaskRunLog[],
+  logs: TaskRunLog[] | undefined,
 ) {
-  if (logs.length === 0) {
+  const incomingLogs = logs ?? []
+  if (incomingLogs.length === 0) {
     return logsByRunId[runId] ? logsByRunId : { ...logsByRunId, [runId]: [] }
   }
 
@@ -2053,7 +1633,7 @@ function mergeRunLogs(
   const indexById = new Map(current.map((log, index) => [log.id, index]))
   const nextLogs = [...current]
 
-  for (const log of logs) {
+  for (const log of incomingLogs) {
     const existingIndex = indexById.get(log.id)
     if (existingIndex === undefined) {
       indexById.set(log.id, nextLogs.length)
@@ -2063,9 +1643,11 @@ function mergeRunLogs(
     }
   }
 
+  const sortedLogs = nextLogs.sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
+
   return {
     ...logsByRunId,
-    [runId]: nextLogs.sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp)),
+    [runId]: sortedLogs.slice(-MAX_LOGS_PER_RUN),
   }
 }
 

@@ -15,19 +15,19 @@ class Settings(BaseSettings):
         description="BitBrowser Local Server base URL.",
     )
     bitbrowser_timeout_seconds: float = 30.0
-    cloud_mail_base_url: str = Field(
-        default="",
-        description="CloudMail API base URL, for example https://mail.example.com.",
-    )
-    cloud_mail_email: str = Field(
-        default="",
-        description="CloudMail administrator email used to generate API token.",
-    )
-    cloud_mail_password: str = Field(
-        default="",
-        description="CloudMail administrator password used to generate API token.",
-    )
-    cloud_mail_timeout_seconds: float = 30.0
+    # cloud_mail_base_url: str = Field(
+    #     default="",
+    #     description="CloudMail API base URL, for example https://mail.example.com.",
+    # )
+    # cloud_mail_email: str = Field(
+    #     default="",
+    #     description="CloudMail administrator email used to generate API token.",
+    # )
+    # cloud_mail_password: str = Field(
+    #     default="",
+    #     description="CloudMail administrator password used to generate API token.",
+    # )
+    # cloud_mail_timeout_seconds: float = 30.0
 
     model_config = SettingsConfigDict(
         env_file=".env",
