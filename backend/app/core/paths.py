@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def get_data_dir() -> Path:
-    if data_dir := os.getenv("UCARD_DATA_DIR"):
+    if data_dir := os.getenv("HELIX_DATA_DIR"):
         return Path(data_dir)
 
     if sys.platform == "darwin":

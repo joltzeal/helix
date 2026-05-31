@@ -109,6 +109,20 @@ class BitBrowserClient(FingerprintBrowserClient):
 
         return "stopped"
 
+    async def list_open_profiles(self) -> list[dict[str, Any]]:
+        response = await self._post("/browser/ports")
+        data = self._data(response)
+        if not isinstance(data, dict):
+            return []
+        return [
+            {
+                "profile_id": str(profile_id),
+                "debug_address": self._normalize_debug_address(port),
+            }
+            for profile_id, port in data.items()
+            if port
+        ]
+
     async def arrange_windows(
         self,
         profile_ids: list[str],

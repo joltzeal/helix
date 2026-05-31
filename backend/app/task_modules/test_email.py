@@ -3,9 +3,13 @@ import string
 
 from app.task_modules.base import (
     AutomationTaskModule,
+    BrowserRequirement,
     TaskConfigField,
     TaskExecutionContext,
     TaskModuleManifest,
+    TaskResult,
+    TaskResultDefinition,
+    WorkItemSpec,
 )
 
 
@@ -13,7 +17,7 @@ class TestEmailTaskModule(AutomationTaskModule):
     manifest = TaskModuleManifest(
         key="test_email",
         name="Test Email",
-        description="测试任务：打开临时浏览器窗口，生成随机邮箱并写入日志，然后由运行器关闭并删除窗口。",
+        description="测试任务：生成随机邮箱，演示新任务结果写入。",
         config_fields=[
             TaskConfigField(
                 key="email_domain",
@@ -25,27 +29,33 @@ class TestEmailTaskModule(AutomationTaskModule):
                 placeholder="example.com",
             ),
             TaskConfigField(
-                key="landing_url",
-                label="入口地址",
-                block="浏览器",
-                field_type="text",
-                required=False,
-                default="about:blank",
-                placeholder="about:blank",
+                key="count",
+                label="数量",
+                block="任务",
+                field_type="number",
+                required=True,
+                default=1,
             ),
         ],
+        results=[TaskResultDefinition(key="email", label="邮箱")],
+        browser=BrowserRequirement(required=False),
     )
 
-    async def run(self, context: TaskExecutionContext) -> dict[str, str]:
-        domain = str(context.config.get("email_domain") or "example.com").strip().lstrip("@")
+    def build_work_items(self, config: dict) -> list[WorkItemSpec]:
+        count = max(int(config.get("count") or 1), 1)
+        return [
+            WorkItemSpec(key="email", input={"email_domain": config.get("email_domain")}, label=f"邮箱 {index}")
+            for index in range(1, count + 1)
+        ]
+
+    async def run(self, context: TaskExecutionContext) -> TaskResult:
+        domain = str(context.input.get("email_domain") or "example.com").strip().lstrip("@")
         local_part = "".join(random.choices(string.ascii_lowercase + string.digits, k=15))
         email = f"{local_part}@{domain}"
-
-        context.log("info", f"Generated test email: {email}")
-        context.log("debug", f"Item {context.item_index} profile_id={context.profile_id}")
-
-        return {
-            "status": "ok",
-            "message": f"Generated test email: {email}",
-            "email": email,
-        }
+        await context.log("info", f"Generated test email: {email}")
+        return TaskResult(
+            key="email",
+            data={"email": email},
+            status="completed",
+            message=f"Generated test email: {email}",
+        )

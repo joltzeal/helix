@@ -1,15 +1,23 @@
+from __future__ import annotations
+
+from dataclasses import asdict
+
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from app.schemas.tasks import (
+    BrowserSessionResponse,
+    TaskArtifactResponse,
     TaskConfigurationResponse,
     TaskConfigurationSaveRequest,
     TaskModuleResponse,
+    TaskResultResponse,
     TaskRunCreateRequest,
     TaskRunLogResponse,
     TaskRunResponse,
 )
-from app.services.log_hub import log_event_hub, run_event_hub
-from app.services.run_store import run_store
+from app.services.log_store import log_store
+from app.services.runtime_events import runtime_event_hub
+from app.services.runtime_store import runtime_store
 from app.services.sqlite_store import sqlite_store
 from app.services.task_control import TaskControlError, task_control
 from app.task_modules.registry import get_task_module, list_task_modules
@@ -18,197 +26,190 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
 @router.get("", response_model=list[TaskModuleResponse])
-async def list_tasks() -> list[TaskModuleResponse]:
-    return [
-        TaskModuleResponse(
-            key=task.manifest.key,
-            name=task.manifest.name,
-            description=task.manifest.description,
-            config_fields=[
-                {
-                    "key": field.key,
-                    "label": field.label,
-                    "block": field.block,
-                    "field_type": field.field_type,
-                    "required": field.required,
-                    "description": field.description,
-                    "placeholder": field.placeholder,
-                    "default": field.default,
-                    "options": field.options,
-                }
-                for field in task.manifest.config_fields
-            ],
-            result_blocks=[
-                {
-                    "key": block.key,
-                    "label": block.label,
-                    "source_key": block.source_key,
-                    "description": block.description,
-                }
-                for block in task.manifest.result_blocks
-            ],
-        )
-        for task in list_task_modules()
-    ]
+async def list_tasks() -> list[dict]:
+    return [_task_to_dict(task) for task in list_task_modules()]
 
 
 @router.get("/configurations/{task_key}", response_model=TaskConfigurationResponse)
 async def get_task_configuration(task_key: str) -> dict:
-    return {
-        "task_key": task_key,
-        "config": sqlite_store.get_task_configuration(task_key),
-    }
+    _ensure_task(task_key)
+    return {"task_key": task_key, "config": sqlite_store.get_task_configuration(task_key)}
 
 
 @router.put("/configurations/{task_key}", response_model=TaskConfigurationResponse)
 async def save_task_configuration(task_key: str, payload: TaskConfigurationSaveRequest) -> dict:
-    try:
-        get_task_module(task_key)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
+    _ensure_task(task_key)
     sqlite_store.save_task_configuration(task_key, payload.config)
-    return {
-        "task_key": task_key,
-        "config": payload.config,
-    }
+    return {"task_key": task_key, "config": payload.config}
 
 
 @router.post("/runs", response_model=TaskRunResponse)
 async def create_task_run(payload: TaskRunCreateRequest) -> dict:
-    try:
-        task = get_task_module(payload.task_key)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    active_run = run_store.get_active_run()
+    task = _ensure_task(payload.task_key)
+    active_run = runtime_store.get_active_run()
     if active_run:
         raise HTTPException(status_code=409, detail="已有任务正在运行，请先停止当前任务。")
 
-    run = run_store.create_run(
+    try:
+        work_items = list(task.build_work_items(payload.config))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"任务配置无法生成工作项：{exc}") from exc
+    if not work_items:
+        raise HTTPException(status_code=400, detail="任务没有可执行的工作项。")
+
+    run = runtime_store.create_run(
         task_key=task.manifest.key,
         task_name=task.manifest.name,
         vendor=payload.vendor,
         concurrency=payload.concurrency,
         config=payload.config,
-        item_count=0 if task.dynamic_work_config_key() else task.resolve_item_count(payload.config),
+        work_items=work_items,
+        cleanup_policy=_cleanup_policy_from_config(payload.config, payload.cleanup_policy),
     )
     try:
         await task_control.start(run.id)
     except TaskControlError as exc:
-        run_store.mark_run_stopped(run.id, str(exc))
+        runtime_store.fail_run(run.id, str(exc))
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return run_store.to_dict(run, include_logs=False)
+    return run.to_dict()
 
 
 @router.post("/runs/active/stop", response_model=TaskRunResponse)
-async def stop_active_task_run() -> dict:
-    run_id = await task_control.stop()
+async def stop_active_task_run(force_cleanup: bool = Query(default=False)) -> dict:
+    run_id = await task_control.stop(force_cleanup=force_cleanup)
     if not run_id:
         raise HTTPException(status_code=404, detail="没有正在运行的任务。")
-    return run_store.to_dict(run_store.get_run(run_id), include_logs=False)
+    return runtime_store.get_run(run_id).to_dict()
 
 
 @router.post("/runs/{run_id}/stop", response_model=TaskRunResponse)
-async def stop_task_run(run_id: str) -> dict:
-    try:
-        run_store.get_run(run_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Task run not found.") from exc
-
-    stopped_run_id = await task_control.stop(run_id)
+async def stop_task_run(run_id: str, force_cleanup: bool = Query(default=False)) -> dict:
+    _ensure_run(run_id)
+    stopped_run_id = await task_control.stop(run_id, force_cleanup=force_cleanup)
     if not stopped_run_id:
         raise HTTPException(status_code=404, detail="没有正在运行的任务。")
-    return run_store.to_dict(run_store.get_run(stopped_run_id), include_logs=False)
+    return runtime_store.get_run(stopped_run_id).to_dict()
 
 
 @router.get("/runs", response_model=list[TaskRunResponse])
 async def list_task_runs() -> list[dict]:
-    return [
-        run_store.to_dict(run, include_logs=False)
-        for run in run_store.list_runs()
-    ]
+    return [run.to_dict() for run in runtime_store.list_runs()]
 
 
 @router.websocket("/runs/ws")
 async def stream_task_runs(websocket: WebSocket) -> None:
     await websocket.accept()
+    for run in runtime_store.list_runs():
+        await websocket.send_json(run.to_dict())
 
-    for run in run_store.list_runs():
-        await websocket.send_json(run_store.to_dict(run, include_logs=False))
-
-    queue = run_event_hub.subscribe("runs")
+    queue = runtime_event_hub.subscribe("runs")
     try:
         while True:
-            event = await queue.get()
-            await websocket.send_json(event)
+            await websocket.send_json(await queue.get())
     except WebSocketDisconnect:
         pass
     finally:
-        run_event_hub.unsubscribe("runs", queue)
+        runtime_event_hub.unsubscribe("runs", queue)
 
 
 @router.get("/runs/{run_id}", response_model=TaskRunResponse)
 async def get_task_run(run_id: str) -> dict:
-    try:
-        run = run_store.get_run(run_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Task run not found.") from exc
-
-    return run_store.to_dict(run, include_logs=False)
+    return _ensure_run(run_id).to_dict()
 
 
 @router.get("/runs/{run_id}/logs", response_model=list[TaskRunLogResponse])
-async def get_task_run_logs(
-    run_id: str,
-    limit: int = Query(default=1000, ge=1, le=10000),
-) -> list[dict]:
-    try:
-        logs = run_store.list_logs(run_id, limit=limit)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Task run not found.") from exc
-
-    return [
-        {
-            "id": log.id,
-            "level": log.level,
-            "message": log.message,
-            "timestamp": log.timestamp,
-            "item_id": log.item_id,
-            "seq": log.seq,
-        }
-        for log in logs
-    ]
+async def get_task_run_logs(run_id: str, limit: int = Query(default=1000, ge=1, le=10000)) -> list[dict]:
+    _ensure_run(run_id)
+    return log_store.list(run_id, limit=limit)
 
 
 @router.websocket("/runs/{run_id}/logs/ws")
 async def stream_task_run_logs(websocket: WebSocket, run_id: str) -> None:
     await websocket.accept()
-
     try:
-        existing_logs = run_store.list_logs(run_id, limit=1000)
-    except KeyError:
+        _ensure_run(run_id)
+    except HTTPException:
         await websocket.close(code=4404, reason="Task run not found.")
         return
 
-    for log in existing_logs:
-        await websocket.send_json(
-            {
-                "id": log.id,
-                "level": log.level,
-                "message": log.message,
-                "timestamp": log.timestamp,
-                "item_id": log.item_id,
-                "seq": log.seq,
-            }
-        )
+    for log in log_store.list(run_id, limit=1000):
+        await websocket.send_json(log)
 
-    queue = log_event_hub.subscribe(run_id)
+    queue = runtime_event_hub.subscribe(f"run:{run_id}:logs")
     try:
         while True:
-            event = await queue.get()
-            await websocket.send_json(event)
+            await websocket.send_json(await queue.get())
     except WebSocketDisconnect:
         pass
     finally:
-        log_event_hub.unsubscribe(run_id, queue)
+        runtime_event_hub.unsubscribe(f"run:{run_id}:logs", queue)
+
+
+@router.get("/runs/{run_id}/browser-sessions", response_model=list[BrowserSessionResponse])
+async def list_run_browser_sessions(run_id: str) -> list[dict]:
+    _ensure_run(run_id)
+    return sqlite_store.list_browser_sessions(run_id=run_id)
+
+
+@router.get("/runs/{run_id}/results", response_model=list[TaskResultResponse])
+async def list_run_results(run_id: str) -> list[dict]:
+    _ensure_run(run_id)
+    return sqlite_store.list_task_results(run_id=run_id)
+
+
+@router.get("/runs/{run_id}/artifacts", response_model=list[TaskArtifactResponse])
+async def list_run_artifacts(run_id: str) -> list[dict]:
+    _ensure_run(run_id)
+    return sqlite_store.list_task_artifacts(run_id=run_id)
+
+
+@router.get("/{task_key}/results", response_model=list[TaskResultResponse])
+async def list_task_results(task_key: str) -> list[dict]:
+    _ensure_task(task_key)
+    return sqlite_store.list_task_results(task_key=task_key)
+
+
+@router.get("/{task_key}/artifacts", response_model=list[TaskArtifactResponse])
+async def list_task_artifacts(task_key: str) -> list[dict]:
+    _ensure_task(task_key)
+    return sqlite_store.list_task_artifacts(task_key=task_key)
+
+
+@router.get("/{task_key}/browser-sessions", response_model=list[BrowserSessionResponse])
+async def list_task_browser_sessions(task_key: str) -> list[dict]:
+    _ensure_task(task_key)
+    return sqlite_store.list_browser_sessions(task_key=task_key)
+
+
+def _task_to_dict(task) -> dict:
+    manifest = task.manifest
+    return {
+        "key": manifest.key,
+        "name": manifest.name,
+        "description": manifest.description,
+        "config_fields": [asdict(field) for field in manifest.config_fields],
+        "results": [asdict(result) for result in manifest.results],
+        "artifacts": [asdict(artifact) for artifact in manifest.artifacts],
+        "browser": asdict(manifest.browser),
+    }
+
+
+def _cleanup_policy_from_config(config: dict, default: str) -> str:
+    value = config.get("cleanup_policy", default)
+    if value in {"keep_open", "close", "delete"}:
+        return str(value)
+    return default
+
+
+def _ensure_task(task_key: str):
+    try:
+        return get_task_module(task_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _ensure_run(run_id: str):
+    try:
+        return runtime_store.get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Task run not found.") from exc

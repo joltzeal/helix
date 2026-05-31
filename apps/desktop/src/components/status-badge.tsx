@@ -2,13 +2,19 @@ import { ActivityIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 
-export function BrowserHealthBadge({ status }: { status: "checking" | "online" | "offline" }) {
+export function BrowserHealthBadge({
+  label = "BitBrowser",
+  status,
+}: {
+  label?: string
+  status: "checking" | "online" | "offline"
+}) {
   const variant = status === "online" ? "default" : status === "offline" ? "destructive" : "secondary"
 
   return (
     <Badge variant={variant}>
       <ActivityIcon data-icon="inline-start" />
-      BitBrowser {formatStatusLabel(status)}
+      {label} {formatStatusLabel(status)}
     </Badge>
   )
 }

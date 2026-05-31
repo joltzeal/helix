@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 
-BrowserVendor = Literal["bit_browser", "ads_browser"]
+BrowserVendor = Literal["bit_browser", "ads_power"]
 
 
 @dataclass(slots=True)
@@ -12,6 +14,9 @@ class BrowserLaunchOptions:
     queue: bool = True
     ignore_default_urls: bool = False
     new_page_url: str | None = None
+    headless: bool = False
+    restore_tabs: bool = False
+    delete_cache: bool = False
 
 
 @dataclass(slots=True)
@@ -58,11 +63,11 @@ class FingerprintBrowserClient(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_profile_detail(self, profile_id: str) -> dict[str, Any]:
+    async def get_profile_status(self, profile_id: str) -> str:
         raise NotImplementedError
 
     @abstractmethod
-    async def get_profile_status(self, profile_id: str) -> str:
+    async def list_open_profiles(self) -> list[dict[str, Any]]:
         raise NotImplementedError
 
     @abstractmethod

@@ -12,7 +12,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { Separator } from "@/components/ui/separator"
 import {
   Table,
   TableBody,
@@ -55,8 +54,8 @@ export function RunRecords({ runs, onRefresh }: { runs: TaskRun[]; onRefresh: ()
 }
 
 function RunRecord({ run }: { run: TaskRun }) {
-  const progress = run.total === 0 ? 0 : Math.round(((run.completed + run.failed) / run.total) * 100)
-  const resultJson = run.result_json ?? []
+  const progress =
+    run.total === 0 ? 0 : Math.round(((run.completed + run.failed + run.cancelled) / run.total) * 100)
 
   return (
     <section className="flex flex-col gap-3 rounded-lg border p-3">
@@ -80,92 +79,36 @@ function RunRecord({ run }: { run: TaskRun }) {
         <TableHeader>
           <TableRow>
             <TableHead>任务项</TableHead>
-            <TableHead>窗口 ID</TableHead>
+            <TableHead>键名</TableHead>
+            <TableHead>标签</TableHead>
             <TableHead>状态</TableHead>
-            <TableHead>调试地址</TableHead>
-            <TableHead>PID</TableHead>
+            <TableHead>开始时间</TableHead>
+            <TableHead>结束时间</TableHead>
             <TableHead>消息</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {run.items.map((item) => (
             <TableRow key={item.id}>
-              <TableCell>{item.item_index}</TableCell>
-              <TableCell className="font-mono text-xs">{item.profile_id ?? "-"}</TableCell>
+              <TableCell>{item.index}</TableCell>
+              <TableCell className="font-mono text-xs">{item.key}</TableCell>
+              <TableCell className="max-w-48 truncate">{item.label}</TableCell>
               <TableCell>
                 <StatusBadge status={item.status} />
               </TableCell>
-              <TableCell className="font-mono text-xs">{item.debug_address ?? "-"}</TableCell>
-              <TableCell>{item.pid ?? "-"}</TableCell>
+              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                {item.started_at ? formatDateTime(item.started_at) : "-"}
+              </TableCell>
+              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                {item.finished_at ? formatDateTime(item.finished_at) : "-"}
+              </TableCell>
               <TableCell className="max-w-72 truncate">{item.error ?? item.message ?? "-"}</TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
-
-      {resultJson.length > 0 ? (
-        <>
-          <Separator />
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-medium">结果记录</div>
-              <Badge variant="secondary">{resultJson.length} 条</Badge>
-            </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>任务项</TableHead>
-                  <TableHead>键名</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>时间</TableHead>
-                  <TableHead>原始行</TableHead>
-                  <TableHead>消息</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {resultJson.map((result, index) => (
-                  <TableRow key={String(result.id ?? index)}>
-                    <TableCell>{formatResultValue(result.item_index)}</TableCell>
-                    <TableCell className="font-mono text-xs">{formatResultValue(result.key)}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={formatResultValue(result.status)} />
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatResultTime(result)}
-                    </TableCell>
-                    <TableCell className="max-w-72 truncate font-mono text-xs">
-                      {formatResultValue(result.line)}
-                    </TableCell>
-                    <TableCell className="max-w-72 truncate">
-                      {formatResultValue(result.message)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </>
-      ) : null}
     </section>
   )
-}
-
-function formatResultValue(value: unknown) {
-  if (value === null || value === undefined || value === "") {
-    return "-"
-  }
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return String(value)
-  }
-  return JSON.stringify(value)
-}
-
-function formatResultTime(result: Record<string, unknown>) {
-  const rawValue = result.created_at ?? result.timestamp ?? result.time
-  if (typeof rawValue !== "string" || rawValue.length === 0) {
-    return "-"
-  }
-  return formatDateTime(rawValue)
 }
 
 function formatDateTime(value: string) {

@@ -123,12 +123,15 @@ export const SelectContent = (
 
   return (
     <Portal>
-      <ArkSelect.Positioner data-slot="select-positioner">
+      <ArkSelect.Positioner
+        className="isolate z-50"
+        data-slot="select-positioner"
+      >
         <ArkSelect.Content
           className={cn(
             "z-50",
             "relative",
-            "max-h-96 min-w-(--reference-width)",
+            "max-h-96 w-(--reference-width) min-w-(--reference-width)",
             "p-1",
             "bg-popover",
             "text-popover-foreground",

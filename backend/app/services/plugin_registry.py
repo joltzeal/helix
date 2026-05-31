@@ -185,6 +185,8 @@ def _load_task(plugin_dir: Path, key: str, entry: str) -> AutomationTaskModule:
         raise PluginError("Plugin task must inherit AutomationTaskModule.")
     if task.manifest.key != key:
         raise PluginError("Plugin manifest key must match task manifest key.")
+    if not hasattr(task, "build_work_items"):
+        raise PluginError("Plugin task must implement build_work_items(config).")
     return task
 
 

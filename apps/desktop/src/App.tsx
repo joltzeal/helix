@@ -1,17 +1,18 @@
 import { createListCollection } from "@ark-ui/react"
 import { getVersion } from "@tauri-apps/api/app"
 import { isTauri } from "@tauri-apps/api/core"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ChevronDownIcon,
   DownloadIcon,
+  LoaderCircleIcon,
   PackageIcon,
-  Settings2Icon,
-  PlayIcon,
   RefreshCwIcon,
-  ReceiptTextIcon,
   Rows3Icon,
+  Settings2Icon,
   SquareIcon,
+  PlayIcon,
+  ReceiptTextIcon,
   UploadIcon,
   WorkflowIcon,
 } from "lucide-react"
@@ -20,28 +21,21 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  FieldSet,
-} from "@/components/ui/field"
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import {
   Select,
   SelectContent,
@@ -50,7 +44,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
 import {
   Sheet,
   SheetContent,
@@ -60,32 +53,35 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Switch } from "@/components/ui/switch"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { Progress } from "@/components/ui/progress"
+import { Separator } from "@/components/ui/separator"
+import { Button as DialogButton } from "@/components/ui/button"
+import { AutoUpdateDialog, type UpdateCheckResult } from "@/components/auto-update-dialog"
 import {
   ArrangeWindowsDialog,
   type WindowArrangeSettingKey,
   type WindowArrangeSettings,
 } from "@/components/arrange-windows-dialog"
-import { AutoUpdateDialog, type UpdateCheckResult } from "@/components/auto-update-dialog"
-import { PluginModulesPanel } from "@/components/plugin-modules-panel"
-import { RunRecords } from "@/components/run-records"
-import { BrowserHealthBadge, StatusBadge } from "@/components/status-badge"
-import { TaskLogPanel } from "@/components/task-log-panel"
+import { LogViewerTerminal } from "@/components/log-viewer"
+import { StatusBadge } from "@/components/status-badge"
 import packageJson from "../package.json"
 import {
   api,
   type PluginModule,
+  type TaskArtifact,
+  type TaskArtifactDefinition,
   type TaskConfigField,
   type TaskModule,
-  type TaskResultBlock,
+  type TaskResult,
+  type TaskResultDefinition,
   type TaskRun,
   type TaskRunLog,
 } from "@/lib/api"
@@ -95,64 +91,65 @@ import {
   isBackendConnectionMessage,
   useApiReady,
 } from "@/hooks/use-api-ready"
+import { cn } from "@/lib/utils"
 
-const VENDOR = "bit_browser"
+const VENDOR_BIT_BROWSER = "bit_browser"
+const VENDOR_ADS_POWER = "ads_power"
 const PACKAGE_VERSION = packageJson.version
 const MAX_LOGS_PER_RUN = 1000
-const WINDOW_ARRANGE_STORAGE_KEY = "helix.windowArrangeSettings"
-const DEFAULT_WINDOW_ARRANGE_SETTINGS = {
-  startX: 0,
-  startY: 0,
-  width: 500,
-  height: 950,
-  col: 3,
-  spaceX: -200,
-  spaceY: 0,
-}
 
 type Page = "launcher" | "records" | "modules"
-type TaskResult = Record<string, unknown>
-interface TaskResultGroup {
-  runId: string
-  taskName: string
-  status: string
-  createdAt: string
-  results: TaskResult[]
-}
+
+type DashboardState = "booting" | "ready" | "loading-failed"
 
 function App() {
   const [page, setPage] = useState<Page>("launcher")
   const [tasks, setTasks] = useState<TaskModule[]>([])
-  const [pluginModules, setPluginModules] = useState<PluginModule[]>([])
+  const [plugins, setPlugins] = useState<PluginModule[]>([])
   const [runs, setRuns] = useState<TaskRun[]>([])
-  const [logsByRunId, setLogsByRunId] = useState<Record<string, TaskRunLog[]>>({})
+  const [runLogs, setRunLogs] = useState<Record<string, TaskRunLog[]>>({})
+  const [runResults, setRunResults] = useState<Record<string, TaskResult[]>>({})
+  const [runArtifacts, setRunArtifacts] = useState<Record<string, TaskArtifact[]>>({})
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [selectedTaskKey, setSelectedTaskKey] = useState("")
+  const [selectedVendor, setSelectedVendor] = useState(VENDOR_BIT_BROWSER)
   const [concurrency, setConcurrency] = useState(1)
   const [config, setConfig] = useState<Record<string, unknown>>({})
-  const [browserHealth, setBrowserHealth] = useState<"checking" | "online" | "offline">("checking")
+  const [browserStatuses, setBrowserStatuses] = useState<Record<string, "checking" | "online" | "offline">>({
+    [VENDOR_BIT_BROWSER]: "checking",
+    [VENDOR_ADS_POWER]: "checking",
+  })
   const [error, setError] = useState<string | null>(null)
+  const [appVersion, setAppVersion] = useState(PACKAGE_VERSION)
+  const [dashboardState, setDashboardState] = useState<DashboardState>("booting")
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [isSavingConfig, setIsSavingConfig] = useState(false)
   const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
   const [isReloadingPlugins, setIsReloadingPlugins] = useState(false)
-  const [isArrangeDialogOpen, setIsArrangeDialogOpen] = useState(false)
-  const [isArrangingWindows, setIsArrangingWindows] = useState(false)
-  const [windowArrangeSettings, setWindowArrangeSettings] = useState<WindowArrangeSettings>(() => loadWindowArrangeSettings())
-  const [windowArrangeDraft, setWindowArrangeDraft] = useState<WindowArrangeSettings>(windowArrangeSettings)
-  const [appVersion, setAppVersion] = useState(PACKAGE_VERSION)
   const [updateCheckRequestId, setUpdateCheckRequestId] = useState(0)
   const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false)
   const [updateCheckMessage, setUpdateCheckMessage] = useState<string | null>(null)
+  const [isArrangeDialogOpen, setIsArrangeDialogOpen] = useState(false)
+  const [isArrangingWindows, setIsArrangingWindows] = useState(false)
+  const [windowArrangeSettings, setWindowArrangeSettings] = useState<WindowArrangeSettings>(loadWindowArrangeSettings)
+  const [windowArrangeDraft, setWindowArrangeDraft] = useState(windowArrangeSettings)
+  const [startupStage, setStartupStage] = useState("正在连接后端...")
+
   const handleApiStarting = useCallback(() => {
-    setError(API_STARTING_MESSAGE)
+    setError((current) => (isBackendConnectionMessage(current) ? null : current))
+    setStartupStage(API_STARTING_MESSAGE)
+    setDashboardState("booting")
   }, [])
   const handleApiReady = useCallback(() => {
     setError((current) => (isBackendConnectionMessage(current) ? null : current))
+    setDashboardState("ready")
+    setStartupStage("核心就绪")
   }, [])
   const handleApiTimeout = useCallback(() => {
     setError(API_START_TIMEOUT_MESSAGE)
+    setDashboardState("loading-failed")
   }, [])
   const { apiReady, checkApiReady } = useApiReady({
     onStarting: handleApiStarting,
@@ -164,10 +161,19 @@ function App() {
     () => tasks.find((task) => task.key === selectedTaskKey) ?? tasks[0],
     [selectedTaskKey, tasks],
   )
-  const activeLogs = activeRunId ? logsByRunId[activeRunId] ?? [] : []
-  const runningRun = useMemo(
-    () => runs.find((run) => isRunActive(run)) ?? null,
-    [runs],
+  const activeRun = useMemo(
+    () => runs.find((run) => run.id === activeRunId) ?? null,
+    [activeRunId, runs],
+  )
+  const selectedRunLogs = activeRunId ? runLogs[activeRunId] ?? [] : []
+  const selectedRunResults = activeRunId ? runResults[activeRunId] ?? [] : []
+  const selectedRunArtifacts = activeRunId ? runArtifacts[activeRunId] ?? [] : []
+  const browserStatusList = useMemo(
+    () => [
+      { key: VENDOR_BIT_BROWSER, label: "BitBrowser", status: browserStatuses[VENDOR_BIT_BROWSER] ?? "checking" },
+      { key: VENDOR_ADS_POWER, label: "AdsPower", status: browserStatuses[VENDOR_ADS_POWER] ?? "checking" },
+    ],
+    [browserStatuses],
   )
 
   useEffect(() => {
@@ -179,7 +185,23 @@ function App() {
       return
     }
 
-    void loadInitialData()
+    let disposed = false
+
+    async function bootstrap() {
+      setStartupStage("加载任务与运行数据...")
+      await loadInitialData()
+      if (disposed) {
+        return
+      }
+      setDashboardState("ready")
+      setStartupStage("核心就绪")
+    }
+
+    void bootstrap()
+
+    return () => {
+      disposed = true
+    }
   }, [apiReady])
 
   useEffect(() => {
@@ -235,8 +257,10 @@ function App() {
         }
         const run = JSON.parse(event.data) as TaskRun
         setRuns((current) => upsertRun(current, run))
-        setLogsByRunId((current) => mergeRunLogs(current, run.id, run.logs))
-        setActiveRunId((current) => current ?? run.id)
+        if (run.id === activeRunId) {
+          setActiveRunId(run.id)
+          void loadRunDetails(run.id)
+        }
       }
 
       socket.onerror = () => {
@@ -262,7 +286,7 @@ function App() {
         closeWebSocket(socket)
       }
     }
-  }, [apiReady])
+  }, [apiReady, activeRunId])
 
   useEffect(() => {
     if (!activeRunId) {
@@ -283,7 +307,6 @@ function App() {
           return
         }
         retryCount = 0
-        setError((current) => (current === "日志连接失败。" ? null : current))
       }
 
       socket.onmessage = (event) => {
@@ -291,7 +314,7 @@ function App() {
           return
         }
         const log = JSON.parse(event.data) as TaskRunLog
-        setLogsByRunId((current) => mergeRunLogs(current, activeRunId, [log]))
+        setRunLogs((current) => mergeRunLogs(current, activeRunId, [log]))
       }
 
       socket.onerror = () => {
@@ -322,6 +345,21 @@ function App() {
   }, [activeRunId])
 
   useEffect(() => {
+    if (!activeRunId) {
+      return
+    }
+
+    void loadRunDetails(activeRunId)
+  }, [activeRunId])
+
+  const refreshActiveRunDetails = useCallback(() => {
+    if (!activeRunId) {
+      return Promise.resolve()
+    }
+    return loadRunDetails(activeRunId)
+  }, [activeRunId])
+
+  useEffect(() => {
     if (!selectedTask) {
       return
     }
@@ -333,7 +371,7 @@ function App() {
       try {
         const saved = await api.getTaskConfiguration(selectedTask.key)
         if (!disposed) {
-          setConfig({ ...defaults, ...configForTask(selectedTask, saved.config) })
+          setConfig({ ...defaults, ...saved.config })
         }
       } catch (caught) {
         if (!disposed) {
@@ -351,7 +389,8 @@ function App() {
   }, [selectedTask])
 
   async function loadInitialData() {
-    await Promise.all([refreshTasks(), refreshRuns(), refreshPluginModules(), checkBrowserHealth()])
+    setStartupStage("检查浏览器与插件...")
+    await Promise.all([refreshTasks(), refreshRuns(), refreshPlugins(), refreshBrowserStatuses()])
   }
 
   async function refreshTasks() {
@@ -370,42 +409,78 @@ function App() {
     try {
       const nextRuns = await api.listRuns()
       setRuns(nextRuns)
-      setLogsByRunId((current) =>
-        nextRuns.reduce(
-          (next, run) => mergeRunLogs(next, run.id, run.logs),
-          current,
-        ),
-      )
-      const latestRun = nextRuns[0]
-      setActiveRunId((current) => current ?? latestRun?.id ?? null)
+      const nextActiveRun = nextRuns.find((run) => isRunActive(run)) ?? nextRuns[0] ?? null
+      setActiveRunId((current) => current ?? nextActiveRun?.id ?? null)
+      if (nextActiveRun) {
+        await Promise.all([loadRecentLogs(nextActiveRun.id), loadRunDetails(nextActiveRun.id)])
+      }
     } catch (caught) {
       setError(getErrorMessage(caught))
     }
   }
 
-  async function refreshPluginModules() {
+  async function loadRecentLogs(runId: string) {
+    try {
+      const logs = await api.listRunLogs(runId, 1000)
+      setRunLogs((current) => ({
+        ...current,
+        [runId]: logs.slice(-MAX_LOGS_PER_RUN),
+      }))
+    } catch (caught) {
+      setError(getErrorMessage(caught))
+    }
+  }
+
+  async function loadRunDetails(runId: string) {
+    try {
+      const [results, artifacts] = await Promise.all([
+        api.listRunResults(runId),
+        api.listRunArtifacts(runId),
+      ])
+      setRunResults((current) => ({
+        ...current,
+        [runId]: results,
+      }))
+      setRunArtifacts((current) => ({
+        ...current,
+        [runId]: artifacts,
+      }))
+    } catch (caught) {
+      setError(getErrorMessage(caught))
+    }
+  }
+
+  async function refreshPlugins() {
     try {
       const nextPluginModules = await api.listPluginModules()
-      setPluginModules(nextPluginModules)
+      setPlugins(nextPluginModules)
     } catch (caught) {
       setError(getErrorMessage(caught))
     }
   }
 
-  async function checkBrowserHealth() {
-    setBrowserHealth("checking")
-    try {
-      const result = await api.checkBrowserHealth(VENDOR)
-      setBrowserHealth(result.ok ? "online" : "offline")
-    } catch {
-      setBrowserHealth("offline")
-    }
-  }
+  async function refreshBrowserStatuses() {
+    setBrowserStatuses({
+      [VENDOR_BIT_BROWSER]: "checking",
+      [VENDOR_ADS_POWER]: "checking",
+    })
 
-  function requestUpdateCheck() {
-    setUpdateCheckMessage(null)
-    setIsCheckingForUpdate(true)
-    setUpdateCheckRequestId((current) => current + 1)
+    await Promise.all(
+      [VENDOR_BIT_BROWSER, VENDOR_ADS_POWER].map(async (vendor) => {
+        try {
+          const result = await api.checkBrowserHealth(vendor)
+          setBrowserStatuses((current) => ({
+            ...current,
+            [vendor]: result.ok ? "online" : "offline",
+          }))
+        } catch {
+          setBrowserStatuses((current) => ({
+            ...current,
+            [vendor]: "offline",
+          }))
+        }
+      }),
+    )
   }
 
   const handleManualUpdateCheckComplete = useCallback((result: UpdateCheckResult, message: string) => {
@@ -413,38 +488,52 @@ function App() {
     setUpdateCheckMessage(result === "failed" ? `更新检测失败：${message}` : message)
   }, [])
 
-  function openArrangeWindowsDialog() {
-    setWindowArrangeDraft(windowArrangeSettings)
-    setIsArrangeDialogOpen(true)
+  function requestUpdateCheck() {
+    setUpdateCheckMessage(null)
+    setIsCheckingForUpdate(true)
+    setUpdateCheckRequestId((current) => current + 1)
   }
 
-  function updateWindowArrangeDraft(key: WindowArrangeSettingKey, value: number) {
-    setWindowArrangeDraft((current) => ({
-      ...current,
-      [key]: value,
-    }))
+  function openUpdateDialog() {
+    setUpdateDialogOpen(true)
   }
 
   async function arrangeWindows() {
+    if (!activeRun) {
+      return
+    }
+
+    const settings = sanitizeWindowArrangeSettings(windowArrangeDraft)
     setError(null)
     setIsArrangingWindows(true)
-
-    const nextSettings = sanitizeWindowArrangeSettings(windowArrangeDraft)
-
     try {
-      await api.arrangeBrowserWindows({
-        vendor: VENDOR,
-        ...nextSettings,
+      await api.arrangeRunBrowserWindows({
+        run_id: activeRun.id,
+        start_x: settings.startX,
+        start_y: settings.startY,
+        width: settings.width,
+        height: settings.height,
+        col: settings.col,
+        space_x: settings.spaceX,
+        space_y: settings.spaceY,
       })
-      saveWindowArrangeSettings(nextSettings)
-      setWindowArrangeSettings(nextSettings)
-      setWindowArrangeDraft(nextSettings)
+      setWindowArrangeSettings(settings)
+      window.localStorage.setItem("helix.windowArrangeSettings", JSON.stringify(settings))
       setIsArrangeDialogOpen(false)
     } catch (caught) {
       setError(getErrorMessage(caught))
     } finally {
       setIsArrangingWindows(false)
     }
+  }
+
+  function openWindowArrangeDialog() {
+    setWindowArrangeDraft(windowArrangeSettings)
+    setIsArrangeDialogOpen(true)
+  }
+
+  function updateWindowArrangeDraft(key: WindowArrangeSettingKey, value: number) {
+    setWindowArrangeDraft((current) => sanitizeWindowArrangeSettings({ ...current, [key]: value }))
   }
 
   async function startRun() {
@@ -458,13 +547,13 @@ function App() {
     try {
       const run = await api.createRun({
         task_key: selectedTask.key,
-        vendor: VENDOR,
+        vendor: selectedVendor,
         concurrency,
-        config: configForTask(selectedTask, config),
+        config: sanitizeTaskConfig(selectedTask, config),
       })
       setRuns((current) => upsertRun(current, run))
-      setLogsByRunId((current) => mergeRunLogs(current, run.id, run.logs))
       setActiveRunId(run.id)
+      setPage("launcher")
     } catch (caught) {
       setError(getErrorMessage(caught))
     } finally {
@@ -473,8 +562,7 @@ function App() {
   }
 
   async function stopRun() {
-    const runId = runningRun?.id
-    if (!runId) {
+    if (!activeRun) {
       return
     }
 
@@ -482,10 +570,8 @@ function App() {
     setIsStopping(true)
 
     try {
-      const run = await api.stopRun(runId)
+      const run = await api.stopRun(activeRun.id)
       setRuns((current) => upsertRun(current, run))
-      setLogsByRunId((current) => mergeRunLogs(current, run.id, run.logs))
-      setActiveRunId(run.id)
     } catch (caught) {
       setError(getErrorMessage(caught))
     } finally {
@@ -501,7 +587,7 @@ function App() {
     setError(null)
     setIsSavingConfig(true)
     try {
-      await api.saveTaskConfiguration(selectedTask.key, configForTask(selectedTask, config))
+      await api.saveTaskConfiguration(selectedTask.key, sanitizeTaskConfig(selectedTask, config))
       return true
     } catch (caught) {
       setError(getErrorMessage(caught))
@@ -521,13 +607,10 @@ function App() {
       task_key: selectedTask.key,
       task_name: selectedTask.name,
       exported_at: exportedAt.toISOString(),
-      config: configForTask(selectedTask, config),
+      config: sanitizeTaskConfig(selectedTask, config),
     }
 
-    downloadJsonFile(
-      `task-config-${selectedTask.key}-${formatDateForFilename(exportedAt)}.json`,
-      payload,
-    )
+    downloadJsonFile(`task-config-${selectedTask.key}-${formatDateForFilename(exportedAt)}.json`, payload)
   }
 
   async function importTaskConfig(file: File) {
@@ -542,7 +625,7 @@ function App() {
       const importedConfig = parseTaskConfigImport(parsed, selectedTask.key)
       setConfig({
         ...defaultConfigForTask(selectedTask),
-        ...configForTask(selectedTask, importedConfig),
+        ...sanitizeTaskConfig(selectedTask, importedConfig),
       })
     } catch (caught) {
       setError(getErrorMessage(caught))
@@ -555,7 +638,7 @@ function App() {
 
     try {
       await api.uploadPluginModule(file)
-      await Promise.all([refreshPluginModules(), refreshTasks()])
+      await Promise.all([refreshPlugins(), refreshTasks()])
     } catch (caught) {
       setError(getErrorMessage(caught))
     } finally {
@@ -569,7 +652,7 @@ function App() {
 
     try {
       const nextPluginModules = await api.reloadPluginModules()
-      setPluginModules(nextPluginModules)
+      setPlugins(nextPluginModules)
       await refreshTasks()
     } catch (caught) {
       setError(getErrorMessage(caught))
@@ -584,7 +667,7 @@ function App() {
 
     try {
       await api.reloadPluginModule(key)
-      await Promise.all([refreshPluginModules(), refreshTasks()])
+      await Promise.all([refreshPlugins(), refreshTasks()])
     } catch (caught) {
       setError(getErrorMessage(caught))
     } finally {
@@ -598,7 +681,7 @@ function App() {
 
     try {
       const nextPluginModules = await api.deletePluginModule(key)
-      setPluginModules(nextPluginModules)
+      setPlugins(nextPluginModules)
       await refreshTasks()
     } catch (caught) {
       setError(getErrorMessage(caught))
@@ -607,35 +690,53 @@ function App() {
     }
   }
 
-  const content = page === "launcher" ? (
-    <section className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[400px_minmax(0,1fr)]">
+  const content = dashboardState !== "ready" ? (
+    <BootScreen
+      state={dashboardState}
+      stage={startupStage}
+      error={error}
+      onRetry={() => void checkApiReady()}
+    />
+  ) : page === "launcher" ? (
+    <section className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
       <TaskLauncher
         tasks={tasks}
         selectedTask={selectedTask}
         selectedTaskKey={selectedTaskKey}
+        selectedVendor={selectedVendor}
         concurrency={concurrency}
         config={config}
-        runs={runs}
-        runningRun={runningRun}
+        activeRun={activeRun && isRunActive(activeRun) ? activeRun : null}
         isStarting={isStarting}
         isStopping={isStopping}
         isSavingConfig={isSavingConfig}
         onTaskChange={setSelectedTaskKey}
+        onVendorChange={setSelectedVendor}
         onConcurrencyChange={setConcurrency}
         onConfigChange={setConfig}
         onConfigSave={() => saveTaskConfig()}
         onConfigExport={exportTaskConfig}
         onConfigImport={(file) => void importTaskConfig(file)}
+        runResults={selectedRunResults}
+        runArtifacts={selectedRunArtifacts}
+        onRefreshRunDetails={refreshActiveRunDetails}
         onStart={() => void startRun()}
         onStop={() => void stopRun()}
       />
-      <TaskLogPanel logs={activeLogs} />
+      <TaskRuntimePanel
+        logs={selectedRunLogs}
+      />
     </section>
   ) : page === "records" ? (
-    <RunRecords runs={runs} onRefresh={() => void refreshRuns()} />
+    <RunRecords
+      runs={runs}
+      runLogs={runLogs}
+      onRefresh={() => void refreshRuns()}
+      onSelectRun={(runId) => setActiveRunId(runId)}
+    />
   ) : (
     <PluginModulesPanel
-      modules={pluginModules}
+      modules={plugins}
       isUploading={isUploadingPlugin}
       isReloading={isReloadingPlugins}
       onUpload={(file) => void uploadPluginModule(file)}
@@ -647,9 +748,9 @@ function App() {
 
   return (
     <main className="h-screen overflow-hidden bg-background text-foreground">
-      <div className="mx-auto flex h-full w-full max-w-[1280px] flex-col gap-4 overflow-hidden px-4 py-4">
+      <div className="mx-auto flex h-full w-full max-w-[1440px] flex-col gap-4 overflow-hidden px-4 py-4">
         <header className="flex shrink-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-col gap-1">
+          <div className="flex min-w-0 flex-col gap-1">
             <h1 className="text-2xl font-semibold tracking-normal">Helix 自动化控制台</h1>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
               <span>v{appVersion}</span>
@@ -663,12 +764,11 @@ function App() {
               >
                 {isCheckingForUpdate ? "检查中..." : "检查更新"}
               </Button>
-              {updateCheckMessage ? (
-                <span className="text-xs">{updateCheckMessage}</span>
-              ) : null}
+              {updateCheckMessage ? <span className="text-xs">{updateCheckMessage}</span> : null}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant={page === "launcher" ? "secondary" : "ghost"}
               onClick={() => setPage("launcher")}
@@ -690,11 +790,7 @@ function App() {
               <PackageIcon data-icon="inline-start" />
               任务插件
             </Button>
-            <BrowserHealthBadge status={browserHealth} />
-            <Button variant="outline" onClick={() => void checkBrowserHealth()}>
-              <RefreshCwIcon data-icon="inline-start" />
-              刷新
-            </Button>
+            <BrowserHealthStack statuses={browserStatusList} onRefresh={() => void refreshBrowserStatuses()} />
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -705,17 +801,21 @@ function App() {
                   </Button>
                 }
               />
-              <DropdownMenuContent align="end" className="w-40">
-                <DropdownMenuItem onClick={openArrangeWindowsDialog}>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onClick={() => void openWindowArrangeDialog()}>
                   <Rows3Icon />
                   重排窗口
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={openUpdateDialog}>
+                  <DownloadIcon />
+                  在线升级
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </header>
 
-        {error ? (
+        {dashboardState === "ready" && error ? (
           <Alert variant="destructive" className="shrink-0">
             <AlertTitle>请求失败</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
@@ -724,6 +824,7 @@ function App() {
 
         {content}
       </div>
+
       <ArrangeWindowsDialog
         open={isArrangeDialogOpen}
         settings={windowArrangeDraft}
@@ -732,43 +833,96 @@ function App() {
         onSettingChange={updateWindowArrangeDraft}
         onSubmit={() => void arrangeWindows()}
       />
-      <AutoUpdateDialog
+
+      <UpdateDialog
+        open={updateDialogOpen}
+        appVersion={appVersion}
         checkRequestId={updateCheckRequestId}
+        isChecking={isCheckingForUpdate}
+        message={updateCheckMessage}
+        onOpenChange={setUpdateDialogOpen}
         onManualCheckComplete={handleManualUpdateCheckComplete}
+        onRequestCheck={() => {
+          setUpdateCheckMessage(null)
+          setIsCheckingForUpdate(true)
+          setUpdateCheckRequestId((current) => current + 1)
+        }}
       />
     </main>
   )
 }
 
-interface TaskLauncherProps {
-  tasks: TaskModule[]
-  selectedTask: TaskModule | undefined
-  selectedTaskKey: string
-  concurrency: number
-  config: Record<string, unknown>
-  runs: TaskRun[]
-  runningRun: TaskRun | null
-  isStarting: boolean
-  isStopping: boolean
-  isSavingConfig: boolean
-  onTaskChange: (value: string) => void
-  onConcurrencyChange: (value: number) => void
-  onConfigChange: (value: Record<string, unknown>) => void
-  onConfigSave: () => Promise<boolean>
-  onConfigExport: () => void
-  onConfigImport: (file: File) => void
-  onStart: () => void
-  onStop: () => void
+function BootScreen({
+  state,
+  stage,
+  error,
+  onRetry,
+}: {
+  state: DashboardState
+  stage: string
+  error: string | null
+  onRetry: () => void
+}) {
+  const failed = state === "loading-failed"
+
+  return (
+    <section className="flex h-full items-center justify-center">
+      <div className="flex w-full max-w-md flex-col gap-4 rounded-lg border p-6">
+        <div className="flex items-center gap-3">
+          <LoaderCircleIcon className={cn("h-5 w-5 text-muted-foreground", failed ? "" : "animate-spin")} />
+          <div className="flex flex-col">
+            <div className="font-medium">{failed ? "核心启动失败" : "正在启动核心"}</div>
+            <div className="text-sm text-muted-foreground">{stage}</div>
+          </div>
+        </div>
+        <Progress value={failed ? 100 : 60} />
+        {failed && error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {failed ? (
+          <Button onClick={onRetry}>重试</Button>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
+function BrowserHealthStack({
+  statuses,
+  onRefresh,
+}: {
+  statuses: { key: string; label: string; status: "checking" | "online" | "offline" }[]
+  onRefresh: () => void
+}) {
+  return (
+    <div className="flex w-[132px] shrink-0 items-stretch overflow-hidden rounded-md border bg-background">
+      <div className="grid min-w-0 flex-1 grid-rows-2">
+        {statuses.map((item) => (
+          <div key={item.key} className="flex min-w-0 items-center justify-between gap-1 px-2 py-1 text-xs leading-none">
+            <span className="truncate">{item.label}</span>
+            <span className={browserDotClassName(item.status)} />
+          </div>
+        ))}
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        className="h-auto w-8 rounded-none border-l px-0"
+        onClick={onRefresh}
+        aria-label="刷新浏览器状态"
+      >
+        <RefreshCwIcon className="size-3.5" />
+      </Button>
+    </div>
+  )
 }
 
 function TaskLauncher({
   tasks,
   selectedTask,
   selectedTaskKey,
+  selectedVendor,
   concurrency,
   config,
-  runs,
-  runningRun,
+  activeRun,
   isStarting,
   isStopping,
   isSavingConfig,
@@ -778,58 +932,81 @@ function TaskLauncher({
   onConfigSave,
   onConfigExport,
   onConfigImport,
+  runResults,
+  runArtifacts,
+  onRefreshRunDetails,
   onStart,
   onStop,
-}: TaskLauncherProps) {
+  onVendorChange,
+}: {
+  tasks: TaskModule[]
+  selectedTask: TaskModule | undefined
+  selectedTaskKey: string
+  selectedVendor: string
+  concurrency: number
+  config: Record<string, unknown>
+  activeRun: TaskRun | null
+  isStarting: boolean
+  isStopping: boolean
+  isSavingConfig: boolean
+  onTaskChange: (value: string) => void
+  onConcurrencyChange: (value: number) => void
+  onConfigChange: (value: Record<string, unknown>) => void
+  onConfigSave: () => Promise<boolean>
+  onConfigExport: () => void
+  onConfigImport: (file: File) => void
+  runResults: TaskResult[]
+  runArtifacts: TaskArtifact[]
+  onRefreshRunDetails: () => Promise<void>
+  onStart: () => void
+  onStop: () => void
+  onVendorChange: (value: string) => void
+}) {
   const [isConfigOpen, setIsConfigOpen] = useState(false)
   const [isResultOpen, setIsResultOpen] = useState(false)
-  const configBlocks = useMemo(
-    () => groupFieldsByBlock(selectedTask?.config_fields ?? []),
-    [selectedTask],
-  )
-  const resultBlocks = selectedTask?.result_blocks ?? []
+  const configBlocks = useMemo(() => groupFieldsByBlock(selectedTask?.config_fields ?? []), [selectedTask])
+  const resultDefinitions = selectedTask?.results ?? []
+  const resultArtifacts = selectedTask?.artifacts ?? []
   const taskResults = useMemo(
-    () => collectTaskResults(runs, resultBlocks, selectedTask?.key ?? ""),
-    [runs, resultBlocks, selectedTask],
-  )
-  const blockStats = useMemo(
-    () => configBlocks.map((block) => getBlockStats(block, config)),
-    [configBlocks, config],
+    () => collectTaskResults(runResults, resultDefinitions),
+    [runResults, resultDefinitions],
   )
 
-  async function saveAndCloseConfig() {
-    const saved = await onConfigSave()
-    if (saved) {
-      setIsConfigOpen(false)
+  useEffect(() => {
+    if (isResultOpen) {
+      void onRefreshRunDetails()
     }
-  }
+  }, [isResultOpen, onRefreshRunDetails])
 
   return (
-    <Card className="h-full min-h-0">
-      <CardHeader>
-        <CardTitle>任务启动器</CardTitle>
-        <CardDescription>选择任务模块并填写运行参数。</CardDescription>
-        <CardAction>
-          <WorkflowIcon className="text-muted-foreground" />
-        </CardAction>
-      </CardHeader>
-      <CardContent className="min-h-0 overflow-y-auto">
+    <section className="flex h-full min-h-0 flex-col gap-4">
+      <div className="rounded-lg border p-4">
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor="task-module">任务模块</FieldLabel>
-            <NativeSelect
+            <SingleSelect
               id="task-module"
-              className="w-full"
               value={selectedTaskKey}
-              onChange={(event) => onTaskChange(event.currentTarget.value)}
-            >
-              {tasks.map((task) => (
-                <NativeSelectOption key={task.key} value={task.key}>
-                  {task.name}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
+              options={tasks.map((task) => ({ label: task.name, value: task.key }))}
+              placeholder="请选择任务"
+              onChange={onTaskChange}
+            />
             <FieldDescription>{selectedTask?.description ?? "暂无可用任务模块。"}</FieldDescription>
+          </Field>
+
+          <Field>
+            <FieldLabel htmlFor="browser-vendor">浏览器</FieldLabel>
+            <SingleSelect
+              id="browser-vendor"
+              value={selectedVendor}
+              disabled={Boolean(activeRun)}
+              options={[
+                { label: "BitBrowser", value: VENDOR_BIT_BROWSER },
+                { label: "AdsPower", value: VENDOR_ADS_POWER },
+              ]}
+              onChange={onVendorChange}
+            />
+            <FieldDescription>任务启动时使用的指纹浏览器适配器。</FieldDescription>
           </Field>
 
           <Field>
@@ -838,27 +1015,27 @@ function TaskLauncher({
               id="concurrency"
               type="number"
               min={1}
-              max={20}
+              max={100}
               value={concurrency}
               onChange={(event) => onConcurrencyChange(Number(event.currentTarget.value))}
             />
-            <FieldDescription>任务模块按该数量并行创建任务项。</FieldDescription>
+            <FieldDescription>当前任务按该数量并行调度。</FieldDescription>
           </Field>
 
           <Separator />
 
           <div className="flex flex-col gap-3 rounded-lg border p-3">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex flex-col gap-1">
+              <div className="flex min-w-0 flex-col gap-1">
                 <div className="text-sm font-medium">任务配置</div>
-                
+                <div className="text-xs text-muted-foreground">按任务 manifest 动态渲染。</div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Button variant="outline" onClick={() => setIsConfigOpen(true)} disabled={!selectedTask}>
                   <Settings2Icon data-icon="inline-start" />
                   配置
                 </Button>
-                {resultBlocks.length > 0 ? (
+                {resultDefinitions.length > 0 ? (
                   <Button variant="outline" onClick={() => setIsResultOpen(true)} disabled={!selectedTask}>
                     <ReceiptTextIcon data-icon="inline-start" />
                     结果
@@ -867,28 +1044,30 @@ function TaskLauncher({
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {blockStats.map((block) => (
-                <Badge key={block.name} variant={block.missingRequired > 0 ? "outline" : "secondary"}>
-                  {block.name} {block.completedRequired}/{block.required}
-                </Badge>
-              ))}
+              {configBlocks.map((block) => {
+                const stats = getBlockStats(block, config)
+                return (
+                  <Badge key={block.name} variant={stats.missingRequired > 0 ? "outline" : "secondary"}>
+                    {block.name} {stats.completedRequired}/{stats.required}
+                  </Badge>
+                )
+              })}
             </div>
           </div>
 
-          <Button
-            onClick={runningRun ? onStop : onStart}
-            disabled={isStarting || isStopping || (!runningRun && !selectedTask)}
-            variant={runningRun ? "destructive" : "default"}
-          >
-            {runningRun ? (
-              <SquareIcon data-icon="inline-start" />
-            ) : (
-              <PlayIcon data-icon="inline-start" />
-            )}
-            {runningRun ? (isStopping ? "正在停止" : "停止任务") : isStarting ? "正在启动" : "启动任务"}
-          </Button>
+          <div className="grid gap-2">
+            <Button
+              onClick={activeRun ? onStop : onStart}
+              disabled={isStarting || isStopping || (!activeRun && !selectedTask)}
+              variant={activeRun ? "destructive" : "default"}
+            >
+              {activeRun ? <SquareIcon data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}
+              {activeRun ? (isStopping ? "正在停止" : "停止任务") : isStarting ? "正在启动" : "启动任务"}
+            </Button>
+          </div>
         </FieldGroup>
-      </CardContent>
+      </div>
+
       <TaskConfigSheet
         open={isConfigOpen}
         blocks={configBlocks}
@@ -898,33 +1077,28 @@ function TaskLauncher({
         onConfigChange={onConfigChange}
         onConfigExport={onConfigExport}
         onConfigImport={onConfigImport}
-        onDone={() => void saveAndCloseConfig()}
+        onDone={async () => {
+          if (await onConfigSave()) {
+            setIsConfigOpen(false)
+          }
+        }}
       />
+
       <TaskResultSheet
         open={isResultOpen}
-        resultBlocks={resultBlocks}
-        resultsByBlock={taskResults}
+        resultDefinitions={resultDefinitions}
+        resultArtifacts={resultArtifacts}
+        artifacts={runArtifacts}
+        resultsByKey={taskResults}
         onOpenChange={setIsResultOpen}
       />
-    </Card>
+    </section>
   )
 }
 
 interface TaskConfigBlock {
   name: string
   fields: TaskConfigField[]
-}
-
-interface TaskConfigSheetProps {
-  open: boolean
-  blocks: TaskConfigBlock[]
-  config: Record<string, unknown>
-  isSaving: boolean
-  onOpenChange: (value: boolean) => void
-  onConfigChange: (value: Record<string, unknown>) => void
-  onConfigExport: () => void
-  onConfigImport: (file: File) => void
-  onDone: () => void
 }
 
 function TaskConfigSheet({
@@ -937,7 +1111,17 @@ function TaskConfigSheet({
   onConfigExport,
   onConfigImport,
   onDone,
-}: TaskConfigSheetProps) {
+}: {
+  open: boolean
+  blocks: TaskConfigBlock[]
+  config: Record<string, unknown>
+  isSaving: boolean
+  onOpenChange: (value: boolean) => void
+  onConfigChange: (value: Record<string, unknown>) => void
+  onConfigExport: () => void
+  onConfigImport: (file: File) => void
+  onDone: () => void
+}) {
   const [activeBlockName, setActiveBlockName] = useState("")
   const importInputRef = useRef<HTMLInputElement>(null)
   const activeBlock = blocks.find((block) => block.name === activeBlockName) ?? blocks[0]
@@ -947,7 +1131,6 @@ function TaskConfigSheet({
       setActiveBlockName(blocks[0].name)
       return
     }
-
     if (activeBlockName && !blocks.some((block) => block.name === activeBlockName)) {
       setActiveBlockName(blocks[0]?.name ?? "")
     }
@@ -955,10 +1138,7 @@ function TaskConfigSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        className="overflow-hidden"
-        style={{ width: "min(96vw, 960px)", maxWidth: "96vw" }}
-      >
+      <SheetContent className="overflow-hidden" style={{ width: "min(96vw, 960px)", maxWidth: "96vw" }}>
         <SheetHeader>
           <SheetTitle>任务配置</SheetTitle>
           <SheetDescription>当前任务的分组运行参数。</SheetDescription>
@@ -966,25 +1146,18 @@ function TaskConfigSheet({
 
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 pb-2 xl:grid-cols-[200px_minmax(0,1fr)]">
           <nav className="flex min-w-0 gap-2 overflow-x-auto xl:flex-col xl:overflow-x-visible">
-            {blocks.map((block) => {
-              const stats = getBlockStats(block, config)
-              const isActive = block.name === activeBlock?.name
-
-              return (
-                <Button
-                  key={block.name}
-                  type="button"
-                  variant={isActive ? "secondary" : "ghost"}
-                  className="h-auto min-w-32 justify-between px-2 py-2 xl:w-full"
-                  onClick={() => setActiveBlockName(block.name)}
-                >
-                  <span className="truncate">{block.name}</span>
-                  <Badge variant={stats.missingRequired > 0 ? "outline" : "secondary"}>
-                    {stats.completedRequired}/{stats.required}
-                  </Badge>
-                </Button>
-              )
-            })}
+            {blocks.map((block) => (
+              <Button
+                key={block.name}
+                type="button"
+                variant={block.name === activeBlock?.name ? "secondary" : "ghost"}
+                className="h-auto min-w-32 justify-between px-2 py-2 xl:w-full"
+                onClick={() => setActiveBlockName(block.name)}
+              >
+                <span className="truncate">{block.name}</span>
+                <Badge variant="secondary">{block.fields.length}</Badge>
+              </Button>
+            ))}
           </nav>
 
           <div className="min-w-0 rounded-lg border">
@@ -993,9 +1166,7 @@ function TaskConfigSheet({
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex flex-col gap-1">
                     <div className="text-base font-medium">{activeBlock.name}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {activeBlock.fields.length} 个字段 · 缺少 {getBlockStats(activeBlock, config).missingRequired} 个必填项
-                    </div>
+                    <div className="text-sm text-muted-foreground">{activeBlock.fields.length} 个字段</div>
                   </div>
                   <Badge variant="outline">{activeBlock.fields.length}</Badge>
                 </div>
@@ -1060,59 +1231,55 @@ function TaskConfigSheet({
   )
 }
 
-interface TaskResultSheetProps {
-  open: boolean
-  resultBlocks: TaskResultBlock[]
-  resultsByBlock: Record<string, TaskResultGroup[]>
-  onOpenChange: (value: boolean) => void
-}
-
 function TaskResultSheet({
   open,
-  resultBlocks,
-  resultsByBlock,
+  resultDefinitions,
+  resultArtifacts,
+  artifacts,
+  resultsByKey,
   onOpenChange,
-}: TaskResultSheetProps) {
-  const [activeBlockKey, setActiveBlockKey] = useState("")
-  const activeBlock = resultBlocks.find((block) => block.key === activeBlockKey) ?? resultBlocks[0]
+}: {
+  open: boolean
+  resultDefinitions: TaskResultDefinition[]
+  resultArtifacts: TaskArtifactDefinition[]
+  artifacts: TaskArtifact[]
+  resultsByKey: Record<string, TaskResult[]>
+  onOpenChange: (value: boolean) => void
+}) {
+  const [activeKey, setActiveKey] = useState("")
+  const activeResult = resultDefinitions.find((item) => item.key === activeKey) ?? resultDefinitions[0]
 
   useEffect(() => {
-    if (!activeBlockKey && resultBlocks[0]) {
-      setActiveBlockKey(resultBlocks[0].key)
+    if (!activeKey && resultDefinitions[0]) {
+      setActiveKey(resultDefinitions[0].key)
       return
     }
-
-    if (activeBlockKey && !resultBlocks.some((block) => block.key === activeBlockKey)) {
-      setActiveBlockKey(resultBlocks[0]?.key ?? "")
+    if (activeKey && !resultDefinitions.some((item) => item.key === activeKey)) {
+      setActiveKey(resultDefinitions[0]?.key ?? "")
     }
-  }, [activeBlockKey, resultBlocks])
+  }, [activeKey, resultDefinitions])
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        className="overflow-hidden"
-        style={{ width: "min(96vw, 960px)", maxWidth: "96vw" }}
-      >
+      <SheetContent className="overflow-hidden" style={{ width: "min(96vw, 1000px)", maxWidth: "96vw" }}>
         <SheetHeader>
           <SheetTitle>任务结果</SheetTitle>
-          <SheetDescription>任务 manifest 声明的本地数据库结果。</SheetDescription>
+          <SheetDescription>按 manifest 声明的结构化结果和附件。</SheetDescription>
         </SheetHeader>
 
-        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 pb-2 xl:grid-cols-[200px_minmax(0,1fr)]">
+        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto px-4 pb-2 xl:grid-cols-[220px_minmax(0,1fr)]">
           <nav className="flex min-w-0 gap-2 overflow-x-auto xl:flex-col xl:overflow-x-visible">
-            {resultBlocks.map((block) => {
-              const isActive = block.key === activeBlock?.key
-              const count = countGroupedResults(resultsByBlock[block.key] ?? [])
-
+            {resultDefinitions.map((item) => {
+              const count = resultsByKey[item.key]?.length ?? 0
               return (
                 <Button
-                  key={block.key}
+                  key={item.key}
                   type="button"
-                  variant={isActive ? "secondary" : "ghost"}
+                  variant={activeResult?.key === item.key ? "secondary" : "ghost"}
                   className="h-auto min-w-32 justify-between px-2 py-2 xl:w-full"
-                  onClick={() => setActiveBlockKey(block.key)}
+                  onClick={() => setActiveKey(item.key)}
                 >
-                  <span className="truncate">{block.label}</span>
+                  <span className="truncate">{item.label}</span>
                   <Badge variant="secondary">{count}</Badge>
                 </Button>
               )
@@ -1120,15 +1287,17 @@ function TaskResultSheet({
           </nav>
 
           <div className="min-w-0 rounded-lg border p-4">
-            {activeBlock ? (
-              <TaskResultPanel
-                block={activeBlock}
-                results={resultsByBlock[activeBlock.key] ?? []}
+            {activeResult ? (
+              <ResultPanel
+                definition={activeResult}
+                results={resultsByKey[activeResult.key] ?? []}
+                artifacts={resultArtifacts}
+                artifactRecords={artifacts.filter((artifact) => artifact.key === activeResult.key)}
               />
             ) : (
               <Alert>
                 <AlertTitle>暂无结果面板</AlertTitle>
-                <AlertDescription>当前任务 manifest 没有声明 result blocks。</AlertDescription>
+                <AlertDescription>当前任务没有声明结果。</AlertDescription>
               </Alert>
             )}
           </div>
@@ -1138,94 +1307,422 @@ function TaskResultSheet({
   )
 }
 
-function TaskResultPanel({ block, results }: { block: TaskResultBlock; results: TaskResultGroup[] }) {
-  const total = countGroupedResults(results)
+function ResultPanel({
+  definition,
+  results,
+  artifacts,
+  artifactRecords,
+}: {
+  definition: TaskResultDefinition
+  results: TaskResult[]
+  artifacts: TaskArtifactDefinition[]
+  artifactRecords: TaskArtifact[]
+}) {
+  const artifactCount = artifacts.length
 
   return (
-    <section className="flex min-w-0 flex-col gap-3">
+    <section className="flex min-w-0 flex-col gap-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <div className="text-base font-medium">{block.label}</div>
-          <div className="text-sm text-muted-foreground">
-            {block.description || "本地运行产生的任务结果记录。"}
-          </div>
+          <div className="text-base font-medium">{definition.label}</div>
+          <div className="text-sm text-muted-foreground">{definition.description || "结构化结果记录。"}</div>
         </div>
-        <Badge variant="secondary">{total} 条</Badge>
+        <Badge variant="secondary">{results.length} 条</Badge>
       </div>
 
-      {total === 0 ? (
+      {results.length === 0 ? (
         <Alert>
-          <AlertTitle>暂无支付结果</AlertTitle>
-          <AlertDescription>任务提交 cards 后会在这里显示结果。</AlertDescription>
+          <AlertTitle>暂无结果</AlertTitle>
+          <AlertDescription>任务执行后会在这里显示最近的结构化结果。</AlertDescription>
         </Alert>
       ) : (
-        <div className="flex min-w-0 flex-col gap-4">
-          {results.map((group) => (
-            <section key={group.runId} className="min-w-0 rounded-lg border">
-              <div className="flex items-start justify-between gap-3 border-b bg-muted/30 px-3 py-2">
-                <div className="flex min-w-0 flex-col gap-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{formatRunResultTitle(group)}</span>
-                    <StatusBadge status={group.status} />
-                    <Badge variant="secondary">{group.results.length} 条</Badge>
-                  </div>
-                  <span className="truncate font-mono text-xs text-muted-foreground">{group.runId}</span>
-                </div>
-                <div className="shrink-0 text-xs text-muted-foreground">
-                  {formatDateTime(group.createdAt)}
-                </div>
-              </div>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>状态</TableHead>
-                    <TableHead>卡号</TableHead>
-                    <TableHead>任务项</TableHead>
-                    <TableHead>时间</TableHead>
-                    <TableHead>消息</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {group.results.map((result, index) => (
-                    <TableRow key={`${group.runId}-${formatResultValue(result.id)}-${index}`}>
-                      <TableCell>
-                        <StatusBadge status={formatResultValue(result.status)} />
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {formatPaymentCard(result)}
-                      </TableCell>
-                      <TableCell>{formatResultValue(result.item_index)}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {formatResultTime(result)}
-                      </TableCell>
-                      <TableCell className="max-w-80 truncate">
-                        {formatResultValue(result.message)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </section>
+        <div className="flex flex-col gap-4">
+          {groupResultsByRun(results).map((group) => (
+            <ResultTableBlock
+              key={group.runId}
+              definition={definition}
+              runId={group.runId}
+              results={group.results}
+            />
           ))}
         </div>
       )}
+
+      {artifactCount > 0 ? (
+        <div className="rounded-lg border p-3">
+          <div className="mb-2 text-sm font-medium">附件</div>
+          <div className="text-sm text-muted-foreground">
+            已声明 {artifactCount} 类附件，当前运行已保存 {artifactRecords.length} 个文件。
+          </div>
+          {artifactRecords.length > 0 ? (
+            <div className="mt-3 grid gap-2">
+              {artifactRecords.slice(0, 20).map((artifact) => (
+                <div key={artifact.id} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">
+                  <span className="min-w-0 truncate">{artifact.name || artifact.filename}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(artifact.size_bytes)}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   )
 }
 
-interface TaskConfigControlProps {
+function ResultTableBlock({
+  definition,
+  runId,
+  results,
+}: {
+  definition: TaskResultDefinition
+  runId: string
+  results: TaskResult[]
+}) {
+  return (
+    <section className="rounded-lg border">
+      <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <div className="text-sm font-medium">运行 {runId.slice(0, 8)}</div>
+          <div className="text-xs text-muted-foreground">{results.length} 条结果</div>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => exportResultTable(definition, runId, results)}
+        >
+          <DownloadIcon data-icon="inline-start" />
+          导出
+        </Button>
+      </div>
+
+      <div className="p-3">
+        <TooltipProvider>
+          <Table className="table-fixed">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-24">状态</TableHead>
+                <TableHead className="w-64">消息</TableHead>
+                <TableHead className="w-44">创建时间</TableHead>
+                <TableHead>数据</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {results.map((result) => (
+                <TableRow key={result.id}>
+                  <TableCell>
+                    <ResultTableCellText value={result.status}>
+                      <StatusBadge status={result.status} />
+                    </ResultTableCellText>
+                  </TableCell>
+                  <TableCell>
+                    <ResultTableCellText value={formatResultValue(result.message)} />
+                  </TableCell>
+                  <TableCell>
+                    <ResultTableCellText
+                      value={formatDateTime(result.created_at)}
+                      className="text-xs text-muted-foreground"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <ResultTableCellText
+                      value={formatResultData(result.data)}
+                      className="font-mono text-xs"
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TooltipProvider>
+      </div>
+    </section>
+  )
+}
+
+function TaskRuntimePanel({ logs }: { logs: TaskRunLog[] }) {
+  return (
+    <section className="min-h-0">
+      <RunLogViewer logs={logs} fill />
+    </section>
+  )
+}
+
+function RunLogViewer({
+  logs,
+  fill = false,
+  maxHeight,
+}: {
+  logs: TaskRunLog[]
+  fill?: boolean
+  maxHeight?: number
+}) {
+  return (
+    <LogViewerTerminal
+      title="任务运行"
+      filterable
+      fill={fill}
+      maxHeight={maxHeight}
+      className={fill ? "h-full" : undefined}
+      entries={logs.map((log) => ({
+        level: log.level,
+        message: log.message,
+        timestamp: log.timestamp,
+      }))}
+    />
+  )
+}
+
+function RunRecords({
+  runs,
+  runLogs,
+  onRefresh,
+  onSelectRun,
+}: {
+  runs: TaskRun[]
+  runLogs: Record<string, TaskRunLog[]>
+  onRefresh: () => void
+  onSelectRun: (runId: string) => void
+}) {
+  return (
+    <section className="flex h-full min-h-0 flex-col gap-4 rounded-lg border p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="font-medium">运行记录</div>
+          <div className="text-sm text-muted-foreground">只展示最近历史，日志默认最多 1000 条。</div>
+        </div>
+        <Button variant="outline" size="sm" onClick={onRefresh}>
+          <RefreshCwIcon data-icon="inline-start" />
+          刷新
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="flex flex-col gap-4">
+          {runs.length === 0 ? (
+            <Alert>
+              <Rows3Icon />
+              <AlertTitle>暂无运行记录</AlertTitle>
+              <AlertDescription>启动任务后会在这里看到持久化的运行记录。</AlertDescription>
+            </Alert>
+          ) : (
+            runs.map((run) => (
+              <section key={run.id} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{run.task_name}</span>
+                      <StatusBadge status={run.status} />
+                      <Badge variant="secondary">{run.vendor}</Badge>
+                    </div>
+                    <span className="truncate text-sm text-muted-foreground">{run.id}</span>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => onSelectRun(run.id)}>
+                    查看日志
+                  </Button>
+                </div>
+                <div className="mt-3 text-sm text-muted-foreground">
+                  已完成 {run.completed}/{run.total} · 失败 {run.failed} · 取消 {run.cancelled} · 并发 {run.concurrency}
+                </div>
+                <div className="mt-3">
+                  <RunLogViewer logs={runLogs[run.id] ?? []} maxHeight={260} />
+                </div>
+              </section>
+            ))
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function PluginModulesPanel({
+  modules,
+  isUploading,
+  isReloading,
+  onUpload,
+  onReloadAll,
+  onReload,
+  onDelete,
+}: {
+  modules: PluginModule[]
+  isUploading: boolean
+  isReloading: boolean
+  onUpload: (file: File) => void
+  onReloadAll: () => void
+  onReload: (key: string) => void
+  onDelete: (key: string) => void
+}) {
+  const uploadInputRef = useRef<HTMLInputElement>(null)
+
+  return (
+    <section className="flex h-full min-h-0 flex-col gap-4 rounded-lg border p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="font-medium">任务插件</div>
+          <div className="text-sm text-muted-foreground">上传、重载、删除插件包。</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={onReloadAll} disabled={isReloading}>
+            <RefreshCwIcon data-icon="inline-start" />
+            {isReloading ? "处理中" : "重载全部"}
+          </Button>
+          <Button variant="outline" onClick={() => uploadInputRef.current?.click()} disabled={isUploading}>
+            <UploadIcon data-icon="inline-start" />
+            上传
+          </Button>
+        </div>
+      </div>
+
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept=".zip"
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0]
+          event.currentTarget.value = ""
+          if (file) {
+            onUpload(file)
+          }
+        }}
+      />
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {modules.length === 0 ? (
+          <Alert>
+            <PackageIcon />
+            <AlertTitle>暂无插件</AlertTitle>
+            <AlertDescription>上传插件包后会显示在这里。</AlertDescription>
+          </Alert>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {modules.map((module) => (
+              <section key={module.key} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{module.name}</span>
+                      <StatusBadge status={module.status} />
+                      <Badge variant="secondary">{module.version || "-"}</Badge>
+                    </div>
+                    <span className="text-sm text-muted-foreground">{module.description || module.key}</span>
+                    {module.error ? <span className="text-sm text-destructive">{module.error}</span> : null}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => onReload(module.key)} disabled={isReloading}>
+                      重载
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={() => onDelete(module.key)} disabled={isReloading}>
+                      删除
+                    </Button>
+                  </div>
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function ResultTableCellText({
+  value,
+  className,
+  children,
+}: {
+  value: string
+  className?: string
+  children?: ReactNode
+}) {
+  const displayValue = value || "-"
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div className={cn("min-w-0 truncate", className)} />
+        }
+      >
+        {children ?? displayValue}
+      </TooltipTrigger>
+      <TooltipContent className="max-w-md whitespace-pre-wrap break-words">
+        {displayValue}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function UpdateDialog({
+  open,
+  appVersion,
+  checkRequestId,
+  isChecking,
+  message,
+  onOpenChange,
+  onManualCheckComplete,
+  onRequestCheck,
+}: {
+  open: boolean
+  appVersion: string
+  checkRequestId: number
+  isChecking: boolean
+  message: string | null
+  onOpenChange: (value: boolean) => void
+  onManualCheckComplete: (result: UpdateCheckResult, message: string) => void
+  onRequestCheck: () => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>在线升级</DialogTitle>
+          <DialogDescription>检测新版本、下载升级包并重启应用。</DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-3">
+          <div className="rounded-lg border px-3 py-2 text-sm text-muted-foreground">当前版本：{appVersion}</div>
+          <div className="rounded-lg border px-3 py-2 text-sm text-muted-foreground">
+            点击“检测更新”后，系统会自动比对并在有新版本时允许下载安装。
+          </div>
+          {message ? (
+            <Alert>
+              <AlertTitle>检测结果</AlertTitle>
+              <AlertDescription>{message}</AlertDescription>
+            </Alert>
+          ) : null}
+        </div>
+
+        <DialogFooter>
+          <DialogButton variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </DialogButton>
+          <DialogButton onClick={onRequestCheck} disabled={isChecking}>
+            {isChecking ? "检测中..." : "检测更新"}
+          </DialogButton>
+        </DialogFooter>
+      </DialogContent>
+      <AutoUpdateDialog
+        checkRequestId={checkRequestId}
+        onManualCheckComplete={onManualCheckComplete}
+      />
+    </Dialog>
+  )
+}
+
+function TaskConfigControl({
+  field,
+  value,
+  onChange,
+}: {
   field: TaskConfigField
   value: unknown
   onChange: (value: unknown) => void
-}
-
-function TaskConfigControl({ field, value, onChange }: TaskConfigControlProps) {
+}) {
   const id = `task-config-${field.key}`
   const stringValue = value === undefined || value === null ? "" : String(value)
   const lineCount = field.key === "cards" ? countNonEmptyLines(stringValue) : null
-  const description = field.key === "cards"
-    ? `${field.description ? `${field.description} ` : ""}当前 ${lineCount ?? 0} 行。`
-    : field.description
 
   return (
     <Field className="min-w-0">
@@ -1243,24 +1740,15 @@ function TaskConfigControl({ field, value, onChange }: TaskConfigControlProps) {
           className="min-h-24 resize-y"
         />
       ) : field.field_type === "select" ? (
-        <NativeSelect
+        <SingleSelect
           id={id}
-          className="w-full"
           value={stringValue}
-          onChange={(event) => onChange(event.currentTarget.value)}
-        >
-          {field.options.map((option) => (
-            <NativeSelectOption key={option} value={option}>
-              {option}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      ) : field.field_type === "multi-select" ? (
-        <TaskConfigMultiSelect
-          field={field}
-          value={value}
+          options={field.options.map((option) => ({ label: option, value: option }))}
+          placeholder={field.placeholder || "请选择"}
           onChange={onChange}
         />
+      ) : field.field_type === "multi-select" ? (
+        <TaskConfigMultiSelect field={field} value={value} onChange={onChange} />
       ) : field.field_type === "checkbox" ? (
         <div className="flex items-center gap-3">
           <Switch
@@ -1278,10 +1766,12 @@ function TaskConfigControl({ field, value, onChange }: TaskConfigControlProps) {
           type={field.field_type === "password" ? "password" : field.field_type === "number" ? "number" : "text"}
           value={stringValue}
           placeholder={field.placeholder}
-          onChange={(event) => onChange(field.field_type === "number" ? Number(event.currentTarget.value) : event.currentTarget.value)}
+          onChange={(event) =>
+            onChange(field.field_type === "number" ? Number(event.currentTarget.value) : event.currentTarget.value)
+          }
         />
       )}
-      {description ? <FieldDescription className="break-words">{description}</FieldDescription> : null}
+      {field.description ? <FieldDescription className="break-words">{field.description}</FieldDescription> : null}
     </Field>
   )
 }
@@ -1290,31 +1780,60 @@ function TaskConfigMultiSelect({
   field,
   value,
   onChange,
-}: TaskConfigControlProps) {
+}: {
+  field: TaskConfigField
+  value: unknown
+  onChange: (value: unknown) => void
+}) {
   const selectedValues = normalizeMultiSelectValue(value)
-  const collection = createListCollection({
-    items: field.options.map((option) => ({
-      label: option,
-      value: option,
-    })),
-  })
+  return (
+    <MultiSelect
+      id={`task-config-${field.key}`}
+      value={selectedValues}
+      options={field.options.map((option) => ({ label: option, value: option }))}
+      placeholder={field.placeholder || "请选择"}
+      onChange={onChange}
+    />
+  )
+}
+
+type AppSelectOption = {
+  label: string
+  value: string
+}
+
+function SingleSelect({
+  id,
+  value,
+  options,
+  placeholder = "请选择",
+  disabled = false,
+  onChange,
+}: {
+  id?: string
+  value: string
+  options: AppSelectOption[]
+  placeholder?: string
+  disabled?: boolean
+  onChange: (value: string) => void
+}) {
+  const collection = createListCollection({ items: options })
 
   return (
     <Select
       collection={collection}
-      value={selectedValues}
-      onValueChange={(details) => onChange(details.value)}
-      multiple
+      ids={id ? { trigger: id } : undefined}
+      value={value ? [value] : []}
+      disabled={disabled}
+      onValueChange={(details) => onChange(details.value[0] ?? "")}
     >
       <SelectTrigger className="w-full">
-        <SelectValue>
-          <SelectContext>{({ value }) => renderMultiSelectValue(value)}</SelectContext>
-        </SelectValue>
+        <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
-        {collection.items.map((item) => (
-          <SelectItem item={item} key={item.value}>
-            {item.label}
+        {collection.items.map((option) => (
+          <SelectItem key={option.value} item={option}>
+            {option.label}
           </SelectItem>
         ))}
       </SelectContent>
@@ -1322,41 +1841,78 @@ function TaskConfigMultiSelect({
   )
 }
 
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message
-  }
-  return String(error)
+function MultiSelect({
+  id,
+  value,
+  options,
+  placeholder = "请选择",
+  disabled = false,
+  onChange,
+}: {
+  id?: string
+  value: string[]
+  options: AppSelectOption[]
+  placeholder?: string
+  disabled?: boolean
+  onChange: (value: string[]) => void
+}) {
+  const collection = createListCollection({ items: options })
+
+  return (
+    <Select
+      collection={collection}
+      ids={id ? { trigger: id } : undefined}
+      value={value}
+      multiple
+      disabled={disabled}
+      onValueChange={(details) => onChange(details.value)}
+    >
+      <SelectTrigger className="w-full">
+        <SelectValue placeholder={placeholder}>
+          <SelectContext>{({ value: selected }) => formatSelectedOptions(selected, options, placeholder)}</SelectContext>
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {collection.items.map((option) => (
+          <SelectItem key={option.value} item={option}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
 }
 
-function loadWindowArrangeSettings(): WindowArrangeSettings {
+function loadWindowArrangeSettings() {
   try {
-    const rawValue = window.localStorage.getItem(WINDOW_ARRANGE_STORAGE_KEY)
+    const rawValue = window.localStorage.getItem("helix.windowArrangeSettings")
     if (!rawValue) {
-      return DEFAULT_WINDOW_ARRANGE_SETTINGS
+      return { startX: 0, startY: 0, width: 500, height: 950, col: 3, spaceX: -200, spaceY: 0 }
     }
-
-    const parsed = JSON.parse(rawValue) as unknown
-    if (!isRecord(parsed)) {
-      return DEFAULT_WINDOW_ARRANGE_SETTINGS
-    }
-
+    const parsed = JSON.parse(rawValue) as Record<string, unknown>
     return sanitizeWindowArrangeSettings({
-      ...DEFAULT_WINDOW_ARRANGE_SETTINGS,
-      ...Object.fromEntries(
-        Object.entries(parsed).map(([key, value]) => [key, normalizeWindowArrangeNumber(value)]),
-      ),
+      startX: normalizeWindowArrangeNumber(parsed.startX),
+      startY: normalizeWindowArrangeNumber(parsed.startY),
+      width: normalizeWindowArrangeNumber(parsed.width),
+      height: normalizeWindowArrangeNumber(parsed.height),
+      col: normalizeWindowArrangeNumber(parsed.col),
+      spaceX: normalizeWindowArrangeNumber(parsed.spaceX),
+      spaceY: normalizeWindowArrangeNumber(parsed.spaceY),
     })
   } catch {
-    return DEFAULT_WINDOW_ARRANGE_SETTINGS
+    return { startX: 0, startY: 0, width: 500, height: 950, col: 3, spaceX: -200, spaceY: 0 }
   }
 }
 
-function saveWindowArrangeSettings(settings: WindowArrangeSettings) {
-  window.localStorage.setItem(WINDOW_ARRANGE_STORAGE_KEY, JSON.stringify(settings))
-}
-
-function sanitizeWindowArrangeSettings(settings: WindowArrangeSettings): WindowArrangeSettings {
+function sanitizeWindowArrangeSettings(settings: {
+  startX: number
+  startY: number
+  width: number
+  height: number
+  col: number
+  spaceX: number
+  spaceY: number
+}) {
   return {
     startX: normalizeWindowArrangeNumber(settings.startX),
     startY: normalizeWindowArrangeNumber(settings.startY),
@@ -1374,7 +1930,15 @@ function normalizeWindowArrangeNumber(value: unknown) {
 }
 
 function downloadJsonFile(filename: string, data: unknown) {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }))
+  downloadBlob(filename, JSON.stringify(data, null, 2), "application/json")
+}
+
+function downloadTextFile(filename: string, content: string, type = "text/plain;charset=utf-8") {
+  downloadBlob(filename, content, type)
+}
+
+function downloadBlob(filename: string, content: BlobPart, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }))
   const link = document.createElement("a")
   link.href = url
   link.download = filename
@@ -1384,32 +1948,92 @@ function downloadJsonFile(filename: string, data: unknown) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
+function exportResultTable(definition: TaskResultDefinition, runId: string, results: TaskResult[]) {
+  const exportedAt = new Date()
+  const dataKeys = collectResultDataKeys(results)
+  const headers = [
+    "id",
+    "run_id",
+    "work_item_id",
+    "task_key",
+    "key",
+    "status",
+    "message",
+    "created_at",
+    ...dataKeys.map((key) => `data.${key}`),
+    "data_json",
+  ]
+  const rows = results.map((result) => {
+    const data = result.data ?? {}
+    return [
+      result.id,
+      result.run_id,
+      result.work_item_id,
+      result.task_key,
+      result.key,
+      result.status,
+      result.message,
+      result.created_at,
+      ...dataKeys.map((key) => formatResultValue(data[key])),
+      formatResultData(data),
+    ]
+  })
+  const csv = [headers, ...rows].map((row) => row.map(escapeCsvCell).join(",")).join("\n")
+  downloadTextFile(
+    `task-result-${definition.key}-${runId.slice(0, 8)}-${formatDateForFilename(exportedAt)}.csv`,
+    csv,
+    "text/csv;charset=utf-8",
+  )
+}
+
+function groupResultsByRun(results: TaskResult[]) {
+  const grouped = new Map<string, TaskResult[]>()
+  for (const result of results) {
+    const current = grouped.get(result.run_id) ?? []
+    current.push(result)
+    grouped.set(result.run_id, current)
+  }
+
+  return Array.from(grouped.entries())
+    .map(([runId, groupedResults]) => ({
+      runId,
+      results: groupedResults.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)),
+      latestCreatedAt: Math.max(...groupedResults.map((result) => Date.parse(result.created_at))),
+    }))
+    .sort((left, right) => right.latestCreatedAt - left.latestCreatedAt)
+}
+
+function collectResultDataKeys(results: TaskResult[]) {
+  const keys = new Set<string>()
+  for (const result of results) {
+    for (const key of Object.keys(result.data ?? {})) {
+      keys.add(key)
+    }
+  }
+  return Array.from(keys).sort()
+}
+
+function escapeCsvCell(value: unknown) {
+  const text = formatResultValue(value)
+  return `"${text.replace(/"/g, '""')}"`
+}
+
 function parseTaskConfigImport(value: unknown, currentTaskKey: string) {
   if (!isRecord(value)) {
     throw new Error("导入的任务配置必须是 JSON 对象。")
   }
 
-  if (isTaskConfigExport(value)) {
+  if ("config" in value) {
     if (typeof value.task_key === "string" && value.task_key !== currentTaskKey) {
       throw new Error(`导入的配置属于任务 "${value.task_key}"，不是当前任务 "${currentTaskKey}"。`)
     }
-
     if (!isRecord(value.config)) {
       throw new Error("导入的任务配置缺少有效的 config 对象。")
     }
-
     return value.config
   }
 
   return value
-}
-
-function isTaskConfigExport(value: Record<string, unknown>) {
-  return "config" in value && (
-    "task_key" in value ||
-    "task_name" in value ||
-    "exported_at" in value
-  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1423,10 +2047,9 @@ function formatDateForFilename(date: Date) {
 function groupFieldsByBlock(fields: TaskConfigField[]): TaskConfigBlock[] {
   const grouped = new Map<string, TaskConfigField[]>()
   for (const field of fields) {
-    const block = normalizeBlockName(field)
+    const block = field.block && field.block !== "general" ? field.block : normalizeBlockName(field)
     grouped.set(block, [...(grouped.get(block) ?? []), field])
   }
-
   return Array.from(grouped.entries()).map(([name, blockFields]) => ({
     name,
     fields: blockFields,
@@ -1434,31 +2057,18 @@ function groupFieldsByBlock(fields: TaskConfigField[]): TaskConfigBlock[] {
 }
 
 function normalizeBlockName(field: TaskConfigField) {
-  if (field.block && field.block !== "general") {
-    return field.block
-  }
-
-  if (field.key.startsWith("cloud_mail_")) {
-    return "邮箱"
-  }
-  if (field.key.includes("proxy")) {
-    return "代理"
-  }
-  if (["coreVersion", "core_version", "ostype"].includes(field.key)) {
-    return "浏览器"
-  }
-  if (field.key.includes("account")) {
-    return "账号"
-  }
+  if (field.key.startsWith("cloud_mail_")) return "邮箱"
+  if (field.key.includes("proxy")) return "代理"
+  if (field.key.includes("arrange")) return "窗口重排"
+  if (field.key.includes("account")) return "账号"
+  if (field.key === "cards" || field.key.includes("billing")) return "支付"
   return "任务"
 }
 
 function getBlockStats(block: TaskConfigBlock, config: Record<string, unknown>) {
   const requiredFields = block.fields.filter((field) => field.required)
   const completedRequired = requiredFields.filter((field) => isFilled(config[field.key])).length
-
   return {
-    name: block.name,
     required: requiredFields.length,
     completedRequired,
     missingRequired: requiredFields.length - completedRequired,
@@ -1473,6 +2083,21 @@ function isFilled(value: unknown) {
     return value.length > 0
   }
   return value !== undefined && value !== null && value !== ""
+}
+
+function defaultConfigForTask(task: TaskModule) {
+  const defaults: Record<string, unknown> = {}
+  for (const field of task.config_fields) {
+    if (field.default !== null && field.default !== undefined) {
+      defaults[field.key] = field.default
+    }
+  }
+  return defaults
+}
+
+function sanitizeTaskConfig(task: TaskModule, config: Record<string, unknown>) {
+  const allowedKeys = new Set(task.config_fields.map((field) => field.key))
+  return Object.fromEntries(Object.entries(config).filter(([key]) => allowedKeys.has(key)))
 }
 
 function normalizeMultiSelectValue(value: unknown) {
@@ -1495,18 +2120,42 @@ function normalizeBooleanValue(value: unknown) {
   return Boolean(value)
 }
 
+function formatSelectedOptions(values: string[], options: AppSelectOption[], placeholder: string) {
+  if (values.length === 0) {
+    return placeholder
+  }
+  const labelsByValue = new Map(options.map((option) => [option.value, option.label]))
+  const firstLabel = labelsByValue.get(values[0] ?? "") ?? values[0] ?? ""
+  if (values.length === 1) {
+    return firstLabel
+  }
+  return `${firstLabel}（另 ${values.length - 1} 项）`
+}
+
 function countNonEmptyLines(value: string) {
   return value.split(/\r?\n/).filter((line) => line.trim().length > 0).length
 }
 
-function renderMultiSelectValue(value: string[]) {
-  if (value.length === 0) {
-    return "请选择"
+function browserDotClassName(status: "checking" | "online" | "offline") {
+  const baseClassName = "size-2 rounded-full"
+  if (status === "online") {
+    return `${baseClassName} bg-emerald-500`
   }
+  if (status === "offline") {
+    return `${baseClassName} bg-destructive`
+  }
+  return `${baseClassName} bg-muted-foreground`
+}
 
-  const firstValue = value[0] ?? ""
-  const additionalValues = value.length > 1 ? `（另 ${value.length - 1} 项）` : ""
-  return firstValue + additionalValues
+function isRunActive(run: TaskRun) {
+  return ["pending", "running", "stopping"].includes(run.status)
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
 }
 
 function formatResultValue(value: unknown) {
@@ -1519,13 +2168,8 @@ function formatResultValue(value: unknown) {
   return JSON.stringify(value)
 }
 
-function formatResultTime(result: Record<string, unknown>) {
-  const value = result.finished_at ?? result.reserved_at ?? result.created_at ?? result.time
-  if (typeof value !== "string" || !value) {
-    return "-"
-  }
-
-  return formatDateTime(value)
+function formatResultData(value: Record<string, unknown>) {
+  return JSON.stringify(value ?? {})
 }
 
 function formatDateTime(value: string) {
@@ -1533,81 +2177,27 @@ function formatDateTime(value: string) {
   if (Number.isNaN(date.getTime())) {
     return value
   }
-
   return date.toLocaleString()
 }
 
-function collectTaskResults(
-  runs: TaskRun[],
-  resultBlocks: TaskResultBlock[],
-  taskKey: string,
-): Record<string, TaskResultGroup[]> {
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B"
+  }
+  const units = ["B", "KB", "MB", "GB"]
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
+  const amount = value / 1024 ** index
+  return `${amount.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+}
+
+function collectTaskResults(results: TaskResult[], definitions: { key: string }[]) {
   return Object.fromEntries(
-    resultBlocks.map((block) => [
-      block.key,
-      runs
-        .filter((run) => run.task_key === taskKey)
-        .map((run) => ({
-          runId: run.id,
-          taskName: run.task_name,
-          status: run.status,
-          createdAt: run.created_at,
-          results: (run.result_json ?? [])
-            .filter((result) => result.key === block.source_key)
-            .map((result) => ({
-              ...result,
-              run_id: run.id,
-              run_status: run.status,
-              run_created_at: run.created_at,
-            }))
-            .sort((left, right) => Date.parse(formatRawResultTime(right)) - Date.parse(formatRawResultTime(left))),
-        }))
-        .filter((group) => group.results.length > 0)
-        .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)),
+    definitions.map((definition) => [
+      definition.key,
+      results
+        .filter((result) => result.key === definition.key)
+        .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)),
     ]),
-  )
-}
-
-function countGroupedResults(groups: TaskResultGroup[]) {
-  return groups.reduce((total, group) => total + group.results.length, 0)
-}
-
-function formatRunResultTitle(group: TaskResultGroup) {
-  return group.taskName || "任务执行"
-}
-
-function formatPaymentCard(result: TaskResult) {
-  const cardNumber = result.card_last4
-  if (typeof cardNumber === "string" && cardNumber) {
-    return cardNumber
-  }
-
-  return formatResultValue(result.line)
-}
-
-function formatRawResultTime(result: Record<string, unknown>) {
-  const value = result.finished_at ?? result.reserved_at ?? result.created_at ?? result.run_created_at ?? result.time
-  return typeof value === "string" ? value : ""
-}
-
-function isRunActive(run: TaskRun) {
-  return ["pending", "running", "stopping"].includes(run.status)
-}
-
-function defaultConfigForTask(task: TaskModule) {
-  const defaults: Record<string, unknown> = {}
-  for (const field of task.config_fields) {
-    if (field.default !== null && field.default !== undefined) {
-      defaults[field.key] = field.default
-    }
-  }
-  return defaults
-}
-
-function configForTask(task: TaskModule, config: Record<string, unknown>) {
-  const allowedKeys = new Set(task.config_fields.map((field) => field.key))
-  return Object.fromEntries(
-    Object.entries(config).filter(([key]) => allowedKeys.has(key)),
   )
 }
 
@@ -1615,25 +2205,15 @@ function upsertRun(runs: TaskRun[], run: TaskRun) {
   const next = runs.some((item) => item.id === run.id)
     ? runs.map((item) => (item.id === run.id ? run : item))
     : [run, ...runs]
-
   return next.sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at))
 }
 
-function mergeRunLogs(
-  logsByRunId: Record<string, TaskRunLog[]>,
-  runId: string,
-  logs: TaskRunLog[] | undefined,
-) {
-  const incomingLogs = logs ?? []
-  if (incomingLogs.length === 0) {
-    return logsByRunId[runId] ? logsByRunId : { ...logsByRunId, [runId]: [] }
-  }
-
+function mergeRunLogs(logsByRunId: Record<string, TaskRunLog[]>, runId: string, logs: TaskRunLog[]) {
   const current = logsByRunId[runId] ?? []
   const indexById = new Map(current.map((log, index) => [log.id, index]))
   const nextLogs = [...current]
 
-  for (const log of incomingLogs) {
+  for (const log of logs) {
     const existingIndex = indexById.get(log.id)
     if (existingIndex === undefined) {
       indexById.set(log.id, nextLogs.length)
@@ -1644,7 +2224,6 @@ function mergeRunLogs(
   }
 
   const sortedLogs = nextLogs.sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp))
-
   return {
     ...logsByRunId,
     [runId]: sortedLogs.slice(-MAX_LOGS_PER_RUN),
@@ -1656,7 +2235,6 @@ function closeWebSocket(socket: WebSocket) {
     socket.onopen = () => socket.close()
     return
   }
-
   if (socket.readyState === WebSocket.OPEN) {
     socket.close()
   }

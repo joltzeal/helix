@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -15,11 +15,23 @@ class TaskConfigFieldResponse(BaseModel):
     options: list[str] = Field(default_factory=list)
 
 
-class TaskResultBlockResponse(BaseModel):
+class TaskResultDefinitionResponse(BaseModel):
     key: str
     label: str
-    source_key: str
     description: str = ""
+
+
+class TaskArtifactDefinitionResponse(BaseModel):
+    key: str
+    label: str
+    kind: str = "file"
+    required: bool = False
+    description: str = ""
+
+
+class BrowserRequirementResponse(BaseModel):
+    required: bool = False
+    max_sessions: int | None = None
 
 
 class TaskModuleResponse(BaseModel):
@@ -27,7 +39,9 @@ class TaskModuleResponse(BaseModel):
     name: str
     description: str
     config_fields: list[TaskConfigFieldResponse]
-    result_blocks: list[TaskResultBlockResponse] = Field(default_factory=list)
+    results: list[TaskResultDefinitionResponse] = Field(default_factory=list)
+    artifacts: list[TaskArtifactDefinitionResponse] = Field(default_factory=list)
+    browser: BrowserRequirementResponse = Field(default_factory=BrowserRequirementResponse)
 
 
 class PluginModuleResponse(BaseModel):
@@ -43,8 +57,9 @@ class PluginModuleResponse(BaseModel):
 class TaskRunCreateRequest(BaseModel):
     task_key: str
     vendor: str = "bit_browser"
-    concurrency: int = Field(default=1, ge=1, le=20)
+    concurrency: int = Field(default=1, ge=1, le=100)
     config: dict[str, Any] = Field(default_factory=dict)
+    cleanup_policy: Literal["keep_open", "close", "delete"] = "delete"
 
 
 class TaskConfigurationResponse(BaseModel):
@@ -56,28 +71,18 @@ class TaskConfigurationSaveRequest(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
-class TaskRunItemResponse(BaseModel):
+class WorkItemResponse(BaseModel):
     id: str
-    item_index: int
-    profile_id: str | None = None
+    run_id: str
+    index: int
+    key: str
+    label: str
+    input: dict[str, Any]
     status: str
-    debug_address: str | None = None
-    websocket_url: str | None = None
-    pid: int | None = None
-    seq: int | None = None
     message: str = ""
     error: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
-
-
-class TaskRunLogResponse(BaseModel):
-    id: str
-    level: str
-    message: str
-    timestamp: str
-    item_id: str | None = None
-    seq: int | None = None
 
 
 class TaskRunResponse(BaseModel):
@@ -87,13 +92,73 @@ class TaskRunResponse(BaseModel):
     vendor: str
     status: str
     concurrency: int
+    config: dict[str, Any]
+    cleanup_policy: str
+    items: list[WorkItemResponse]
     total: int
     completed: int
     failed: int
-    config: dict[str, Any]
-    items: list[TaskRunItemResponse]
-    logs: list[TaskRunLogResponse] = Field(default_factory=list)
-    result_json: list[dict[str, Any]] = Field(default_factory=list)
+    cancelled: int
     created_at: str
     started_at: str | None = None
     finished_at: str | None = None
+    message: str = ""
+    error: str | None = None
+
+
+class TaskRunLogResponse(BaseModel):
+    id: str
+    run_id: str
+    level: str
+    message: str
+    timestamp: str
+    work_item_id: str | None = None
+    browser_session_id: str | None = None
+
+
+class BrowserSessionResponse(BaseModel):
+    id: str
+    run_id: str
+    work_item_id: str
+    task_key: str | None = None
+    vendor: str
+    profile_id: str
+    status: str
+    debug_address: str = ""
+    websocket_url: str | None = None
+    pid: int | None = None
+    seq: int | None = None
+    created_by_core: bool = False
+    cleanup_policy: str = "delete"
+    raw: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+    opened_at: str | None = None
+    closed_at: str | None = None
+    error: str | None = None
+
+
+class TaskResultResponse(BaseModel):
+    id: str
+    run_id: str
+    work_item_id: str
+    task_key: str
+    key: str
+    status: str
+    message: str
+    data: dict[str, Any]
+    created_at: str
+
+
+class TaskArtifactResponse(BaseModel):
+    id: str
+    run_id: str
+    work_item_id: str
+    task_key: str
+    key: str
+    kind: str
+    name: str
+    filename: str
+    mime_type: str
+    relative_path: str
+    size_bytes: int
+    created_at: str

@@ -52,10 +52,10 @@ fn spawn_api_sidecar(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
     let (mut rx, child) = app
         .shell()
         .sidecar("helix-api")?
-        .env("UCARD_API_HOST", "127.0.0.1")
-        .env("UCARD_API_PORT", "8765")
-        .env("UCARD_API_RELOAD", "false")
-        .env("UCARD_DATA_DIR", data_dir.as_os_str())
+        .env("HELIX_API_HOST", "127.0.0.1")
+        .env("HELIX_API_PORT", "8765")
+        .env("HELIX_API_RELOAD", "false")
+        .env("HELIX_DATA_DIR", data_dir.as_os_str())
         .spawn()?;
 
     log_sidecar_message(&data_dir, &format!("started helix-api pid={}", child.pid()));

@@ -16,11 +16,23 @@ export interface TaskConfigField {
   options: string[]
 }
 
-export interface TaskResultBlock {
+export interface TaskResultDefinition {
   key: string
   label: string
-  source_key: string
   description: string
+}
+
+export interface TaskArtifactDefinition {
+  key: string
+  label: string
+  kind: string
+  required: boolean
+  description: string
+}
+
+export interface BrowserRequirement {
+  required: boolean
+  max_sessions: number | null
 }
 
 export interface TaskModule {
@@ -28,7 +40,9 @@ export interface TaskModule {
   name: string
   description: string
   config_fields: TaskConfigField[]
-  result_blocks: TaskResultBlock[]
+  results: TaskResultDefinition[]
+  artifacts: TaskArtifactDefinition[]
+  browser: BrowserRequirement
 }
 
 export interface PluginModule {
@@ -47,15 +61,15 @@ export interface BrowserHealthResponse {
 }
 
 export interface BrowserArrangeWindowsPayload {
-  vendor: string
-  profile_ids?: string[]
-  startX: number
-  startY: number
-  width: number
-  height: number
-  col: number
-  spaceX: number
-  spaceY: number
+  run_id: string
+  session_ids?: string[]
+  start_x?: number
+  start_y?: number
+  width?: number
+  height?: number
+  col?: number
+  space_x?: number
+  space_y?: number
 }
 
 export interface ApiHealthResponse {
@@ -64,13 +78,12 @@ export interface ApiHealthResponse {
 
 export interface TaskRunItem {
   id: string
-  item_index: number
-  profile_id: string | null
+  run_id: string
+  index: number
+  key: string
+  label: string
+  input: Record<string, unknown>
   status: string
-  debug_address: string | null
-  websocket_url: string | null
-  pid: number | null
-  seq: number | null
   message: string
   error: string | null
   started_at: string | null
@@ -79,11 +92,12 @@ export interface TaskRunItem {
 
 export interface TaskRunLog {
   id: string
+  run_id: string
   level: LogLevel
   message: string
   timestamp: string
-  item_id: string | null
-  seq: number | null
+  work_item_id: string | null
+  browser_session_id: string | null
 }
 
 export interface TaskRun {
@@ -93,16 +107,23 @@ export interface TaskRun {
   vendor: string
   status: string
   concurrency: number
+  config: Record<string, unknown>
+  cleanup_policy: string
+  items: TaskRunItem[]
   total: number
   completed: number
   failed: number
-  config: Record<string, unknown>
-  items: TaskRunItem[]
-  logs?: TaskRunLog[]
-  result_json: Record<string, unknown>[]
+  cancelled: number
   created_at: string
   started_at: string | null
   finished_at: string | null
+  message: string
+  error: string | null
+}
+
+export interface TaskConfigurationResponse {
+  task_key: string
+  config: Record<string, unknown>
 }
 
 export interface CreateTaskRunPayload {
@@ -110,11 +131,65 @@ export interface CreateTaskRunPayload {
   vendor: string
   concurrency: number
   config: Record<string, unknown>
+  cleanup_policy?: "keep_open" | "close" | "delete"
 }
 
-export interface TaskConfigurationResponse {
+export interface BrowserOpenedProfile {
+  profile_id: string
+  debug_address: string
+}
+
+export interface BrowserOpenedProfilesResponse {
+  vendor: string
+  profiles: BrowserOpenedProfile[]
+}
+
+export interface BrowserSession {
+  id: string
+  run_id: string
+  work_item_id: string
   task_key: string
-  config: Record<string, unknown>
+  vendor: string
+  profile_id: string
+  status: string
+  debug_address: string
+  websocket_url: string | null
+  pid: number | null
+  seq: number | null
+  created_by_core: boolean
+  cleanup_policy: string
+  raw: Record<string, unknown>
+  created_at: string
+  opened_at: string | null
+  closed_at: string | null
+  error: string | null
+}
+
+export interface TaskResult {
+  id: string
+  run_id: string
+  work_item_id: string
+  task_key: string
+  key: string
+  status: string
+  message: string
+  data: Record<string, unknown>
+  created_at: string
+}
+
+export interface TaskArtifact {
+  id: string
+  run_id: string
+  work_item_id: string
+  task_key: string
+  key: string
+  kind: string
+  name: string
+  filename: string
+  mime_type: string
+  relative_path: string
+  size_bytes: number
+  created_at: string
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -172,15 +247,17 @@ function parseErrorMessage(text: string) {
 
 export const api = {
   checkApiHealth: () => apiFetch<ApiHealthResponse>("/health"),
-  checkBrowserHealth: (vendor = "bit_browser") =>
+  checkBrowserHealth: (vendor: string) =>
     apiFetch<BrowserHealthResponse>(`/api/browsers/health/${vendor}`, {
       method: "POST",
     }),
-  arrangeBrowserWindows: (payload: BrowserArrangeWindowsPayload) =>
-    apiFetch<{ ok: boolean }>("/api/browsers/arrange-windows", {
+  arrangeRunBrowserWindows: (payload: BrowserArrangeWindowsPayload) =>
+    apiFetch<{ ok: boolean }>("/api/browsers/runs/arrange-windows", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  listOpenedBrowsers: (vendor: string) =>
+    apiFetch<BrowserOpenedProfilesResponse>(`/api/browsers/opened/${vendor}`),
   listTasks: () => apiFetch<TaskModule[]>("/api/tasks"),
   listPluginModules: () => apiFetch<PluginModule[]>("/api/task-modules"),
   reloadPluginModules: () =>
@@ -213,6 +290,12 @@ export const api = {
   listRuns: () => apiFetch<TaskRun[]>("/api/tasks/runs"),
   listRunLogs: (runId: string, limit = 1000) =>
     apiFetch<TaskRunLog[]>(`/api/tasks/runs/${runId}/logs?limit=${limit}`),
+  listRunBrowserSessions: (runId: string) =>
+    apiFetch<BrowserSession[]>(`/api/tasks/runs/${runId}/browser-sessions`),
+  listRunResults: (runId: string) =>
+    apiFetch<TaskResult[]>(`/api/tasks/runs/${runId}/results`),
+  listRunArtifacts: (runId: string) =>
+    apiFetch<TaskArtifact[]>(`/api/tasks/runs/${runId}/artifacts`),
   runsWsUrl: () => `${WS_BASE}/api/tasks/runs/ws`,
   runLogsWsUrl: (runId: string) => `${WS_BASE}/api/tasks/runs/${runId}/logs/ws`,
   createRun: (payload: CreateTaskRunPayload) =>
